@@ -73,3 +73,76 @@ curl -s https://auth.bancoplata.mx/envs/env.json
   that require a billable API key.
 - Audit other subdomains (e.g. `auth.bancoplata.mx`) for the same
   exposure pattern and apply the same fix consistently.
+
+---
+
+# Additional Finding: Internal Kubernetes Service URL in Client-Side JavaScript
+
+**Severity:** Low/Medium
+**Target:** `bancoplata.mx`
+**Type:** Information Disclosure / Internal Infrastructure Exposure
+
+## Summary
+
+The public marketing/security page at `https://bancoplata.mx/es/security`
+renders server-side Next.js hydration state that contains a hardcoded
+internal Kubernetes cluster DNS address. This value is embedded in the
+page's JavaScript and is visible to any visitor in the page source.
+
+## Exposed Data
+
+Inside the `self.__next_f.push(...)` hydration payload embedded in the
+HTML response:
+
+```json
+"snowplowMicroCollectorUrl": "http://snowplow-micro.frontend-website-constructor-prod.svc.cluster.local:9090"
+```
+
+This reveals:
+
+- **Internal service name:** `snowplow-micro`
+- **Kubernetes namespace:** `frontend-website-constructor-prod`
+- **Protocol and port:** `http` on port `9090`
+- **Cluster DNS suffix:** `.svc.cluster.local` (standard Kubernetes internal DNS)
+
+## Impact
+
+- **Infrastructure topology disclosure:** The Kubernetes namespace name
+  (`frontend-website-constructor-prod`) confirms the production environment
+  name and naming convention used internally. Combined with other leaked
+  service URLs (from `env.json`), this builds a more complete picture of
+  Plata's internal service topology.
+- **Snowplow collector identification:** Knowing the internal collector
+  address could assist an attacker who gains internal network access (e.g.
+  via SSRF or container escape) in locating and exfiltrating analytics
+  data or poisoning the event stream.
+- **Build-time misconfiguration signal:** The fact that a server-side
+  rendering variable pointing to an internal URL is propagated into
+  client-side state indicates that build-time or runtime environment
+  variable handling is leaking internal configuration into the public
+  JavaScript bundle — the same root cause class as the `env.json` finding.
+
+## Steps to Reproduce
+
+1. Open `https://bancoplata.mx/es/security` in a browser or with curl.
+2. View the page source (Ctrl+U) or inspect the raw HTTP response body.
+3. Search for `snowplow` or `svc.cluster.local` in the source.
+4. Observe the internal Kubernetes DNS URL in the Next.js hydration JSON.
+
+```
+curl -s https://bancoplata.mx/es/security | grep -o 'snowplowMicroCollectorUrl[^"]*"[^"]*"'
+```
+
+## Recommendations
+
+- Audit all Next.js pages for server-side environment variables that are
+  unintentionally passed to `props` or page data and serialised into
+  client-side state.
+- Internal service URLs (those ending in `.svc.cluster.local` or similar)
+  must never appear in any public HTTP response body.
+- Use Next.js's `NEXT_PUBLIC_` prefix convention strictly: only variables
+  explicitly intended for client-side use should carry that prefix; all
+  other variables remain server-side only.
+- Consider a build-time linter or CI check that scans the compiled
+  JavaScript bundle and page HTML for patterns like `svc.cluster.local`,
+  `internal`, or other known-internal hostnames.
