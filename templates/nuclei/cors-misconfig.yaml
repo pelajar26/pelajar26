@@ -1,0 +1,52 @@
+id: cors-misconfiguration-advanced
+
+info:
+  name: Advanced CORS Misconfiguration
+  author: bb-toolkit
+  severity: medium
+  description: Detects CORS misconfigurations including wildcard, null origin, and reflected origin with credentials
+  tags: cors,misconfig,headers
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}"
+      - "{{BaseURL}}/api"
+      - "{{BaseURL}}/api/v1"
+      - "{{BaseURL}}/api/v2"
+      - "{{BaseURL}}/graphql"
+
+    headers:
+      Origin: "https://evil.attacker.com"
+
+    matchers-condition: or
+    matchers:
+      # Reflects attacker origin with credentials
+      - type: word
+        part: header
+        words:
+          - "Access-Control-Allow-Origin: https://evil.attacker.com"
+          - "Access-Control-Allow-Credentials: true"
+        condition: and
+
+      # Null origin accepted
+      - type: word
+        part: header
+        words:
+          - "Access-Control-Allow-Origin: null"
+
+      # Wildcard with credentials (invalid but some servers do it)
+      - type: word
+        part: header
+        words:
+          - "Access-Control-Allow-Origin: *"
+          - "Access-Control-Allow-Credentials: true"
+        condition: and
+
+    extractors:
+      - type: kval
+        part: header
+        kval:
+          - Access-Control-Allow-Origin
+          - Access-Control-Allow-Credentials
+          - Access-Control-Allow-Methods

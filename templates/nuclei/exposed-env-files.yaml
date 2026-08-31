@@ -1,0 +1,49 @@
+id: exposed-env-files
+
+info:
+  name: Exposed Environment Files
+  author: bb-toolkit
+  severity: high
+  description: Detects publicly accessible .env and config files containing credentials
+  tags: exposure,config,env,credentials
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/.env"
+      - "{{BaseURL}}/.env.local"
+      - "{{BaseURL}}/.env.backup"
+      - "{{BaseURL}}/.env.old"
+      - "{{BaseURL}}/.env.prod"
+      - "{{BaseURL}}/.env.production"
+      - "{{BaseURL}}/.env.staging"
+      - "{{BaseURL}}/.env.dev"
+      - "{{BaseURL}}/.env.development"
+      - "{{BaseURL}}/.env.example"
+      - "{{BaseURL}}/.env.sample"
+      - "{{BaseURL}}/env"
+      - "{{BaseURL}}/config/.env"
+      - "{{BaseURL}}/app/.env"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+
+      - type: regex
+        part: body
+        regex:
+          - '(?i)(DB_PASSWORD|DATABASE_URL|SECRET_KEY|API_KEY|AWS_SECRET|REDIS_URL|MAIL_PASSWORD|SMTP_PASS|JWT_SECRET|APP_KEY|PRIVATE_KEY)\s*=\s*.+'
+
+      - type: word
+        part: body
+        words:
+          - "="
+        condition: and
+
+    extractors:
+      - type: regex
+        part: body
+        regex:
+          - '(?i)(DB_PASSWORD|DATABASE_URL|SECRET_KEY|API_KEY|AWS_SECRET|REDIS_URL|MAIL_PASSWORD|JWT_SECRET|APP_KEY)\s*=\s*(.+)'

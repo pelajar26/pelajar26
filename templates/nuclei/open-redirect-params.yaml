@@ -1,0 +1,53 @@
+id: open-redirect-common-params
+
+info:
+  name: Open Redirect via Common Parameters
+  author: bb-toolkit
+  severity: medium
+  description: Tests common redirect parameters for open redirect vulnerabilities
+  tags: redirect,generic,oast
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}?redirect=https://evil.com"
+      - "{{BaseURL}}?url=https://evil.com"
+      - "{{BaseURL}}?next=https://evil.com"
+      - "{{BaseURL}}?return=https://evil.com"
+      - "{{BaseURL}}?returnUrl=https://evil.com"
+      - "{{BaseURL}}?return_url=https://evil.com"
+      - "{{BaseURL}}?goto=https://evil.com"
+      - "{{BaseURL}}?redir=https://evil.com"
+      - "{{BaseURL}}?dest=https://evil.com"
+      - "{{BaseURL}}?destination=https://evil.com"
+      - "{{BaseURL}}?forward=https://evil.com"
+      - "{{BaseURL}}?location=https://evil.com"
+      - "{{BaseURL}}?target=https://evil.com"
+      - "{{BaseURL}}?continue=https://evil.com"
+      - "{{BaseURL}}?back=https://evil.com"
+      - "{{BaseURL}}?out=https://evil.com"
+      - "{{BaseURL}}?view=https://evil.com"
+      - "{{BaseURL}}?to=https://evil.com"
+      # Double-encoded
+      - "{{BaseURL}}?redirect=https%3A%2F%2Fevil.com"
+      # Protocol-relative
+      - "{{BaseURL}}?redirect=//evil.com"
+      - "{{BaseURL}}?url=//evil.com"
+      # With path bypass
+      - "{{BaseURL}}?redirect=https://evil.com/."
+      - "{{BaseURL}}?url=https://trusted.com@evil.com"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 301
+          - 302
+          - 303
+          - 307
+          - 308
+
+      - type: word
+        part: header
+        words:
+          - "evil.com"

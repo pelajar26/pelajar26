@@ -42,6 +42,17 @@ install_go_tool "dnsx"       "github.com/projectdiscovery/dnsx/cmd/dnsx@latest"
 install_go_tool "naabu"      "github.com/projectdiscovery/naabu/v2/cmd/naabu@latest"
 install_go_tool "gau"        "github.com/lc/gau/v2/cmd/gau@latest"
 install_go_tool "waybackurls" "github.com/tomnomnom/waybackurls@latest"
+install_go_tool "subjack"    "github.com/haccer/subjack@latest"
+install_go_tool "dalfox"     "github.com/hahwul/dalfox/v2@latest"
+install_go_tool "interactsh-client" "github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest"
+
+# Python tools
+info "Installing Python tools..."
+if command -v pip3 &>/dev/null; then
+    pip3 install arjun --quiet && ok "arjun installed" || warn "Failed to install arjun"
+else
+    warn "pip3 not found — skip arjun"
+fi
 
 # Update nuclei templates
 if command -v nuclei &>/dev/null; then

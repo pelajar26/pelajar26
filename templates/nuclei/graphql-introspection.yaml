@@ -1,0 +1,44 @@
+id: graphql-introspection-enabled
+
+info:
+  name: GraphQL Introspection Enabled
+  author: bb-toolkit
+  severity: medium
+  description: GraphQL introspection is enabled, exposing full schema including queries, mutations and types
+  tags: graphql,exposure,api
+
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/graphql"
+      - "{{BaseURL}}/graphiql"
+      - "{{BaseURL}}/api/graphql"
+      - "{{BaseURL}}/v1/graphql"
+      - "{{BaseURL}}/v2/graphql"
+      - "{{BaseURL}}/query"
+      - "{{BaseURL}}/gql"
+
+    headers:
+      Content-Type: application/json
+
+    body: '{"query": "{ __schema { queryType { name } mutationType { name } types { name kind } } }"}'
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+
+      - type: word
+        part: body
+        words:
+          - "__schema"
+          - "queryType"
+        condition: and
+
+    extractors:
+      - type: regex
+        part: body
+        regex:
+          - '"name"\s*:\s*"([A-Za-z]+)"'
+        group: 1

