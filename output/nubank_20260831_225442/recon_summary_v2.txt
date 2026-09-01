@@ -1,0 +1,192 @@
+========================================================
+ NUBANK BUG BOUNTY RECON — SCAN SUMMARY v2
+ Scope: *.nubank.com.br *.nu.com.mx *.nu.com.co *.nuinvest.com.br
+ Updated: 2026-09-01
+========================================================
+
+Header used: X-Correlation-Id: bc-handle
+Mode: Passive + gentle active (low rate, with delays)
+
+--------------------------------------------------------
+STATISTICS
+--------------------------------------------------------
+Subdomains found    : 201
+DNS resolved        : 172
+Live hosts          : 146
+  200 OK            : 20
+  401 API           : 65
+  403               : 17
+  301/302 redirect  : 16
+  404               : 22
+  Other             : 6
+
+--------------------------------------------------------
+FINDING 1 - Internal Microservice Enumeration [MEDIUM / P3]
+  Report: bugcrowd_finding1.md
+--------------------------------------------------------
+65 production API endpoints publicly DNS-resolvable.
+All return 401 (auth required) but names are exposed.
+
+Services found:
+  prod-global-auth.{nubank.com.br, nu.com.mx, nu.com.co}
+  prod-global-app-config.nubank.com.br
+  prod-global-magnitude.nu.com.mx
+  prod-global-ouroboros.nu.com.mx
+  prod-s{0-19}-{blade-runner, customers, fog-wall,
+    magic-screen, magnitude, milli-vanilli, nuddynho,
+    rosetta, shore, telefonista, pinboard, unicel-co,
+    unicel-mx, tmx-client, trabalha, chris-rock,
+    dashiki, facade, joao-grilo, ...}
+
+Stack: server = istio-envoy (Istio service mesh)
+RBAC: prod-global-jean-grey.nu.com.co returns "RBAC: access denied"
+      confirming Istio RBAC enforcement on mesh
+Pattern: prod-s{shard}-{name}.{region-domain}
+
+Impact: Full internal service map. Force multiplier for auth bypass.
+
+--------------------------------------------------------
+FINDING 2 - CORS Wildcard Subdomain + credentials:true [HIGH/P2→CRITICAL/P1]
+  Report: bugcrowd_finding2_cors.md
+--------------------------------------------------------
+ALL production microservices reflect ANY Nubank subdomain as CORS origin
+with access-control-allow-credentials: true — including non-existent subdomains.
+
+Confirmed on:
+  prod-global-auth.nubank.com.br
+  pix.nubank.com.br
+  prod-global-app-config.nubank.com.br
+  prod-s0-customers.nu.com.mx
+  [all 65 prod-* endpoints]
+
+Reflection covers ALL four Nubank TLDs:
+  *.nubank.com.br  → reflected + credentials: true
+  *.nu.com.mx      → reflected + credentials: true
+  *.nu.com.co      → reflected + credentials: true
+  *.nuinvest.com.br → reflected + credentials: true
+
+Even non-existent subdomains are reflected:
+  Origin: https://nonexistent-xyz-attacker.nubank.com.br
+  → access-control-allow-origin: https://nonexistent-xyz-attacker.nubank.com.br
+  → access-control-allow-credentials: true
+
+Allowed methods: GET, POST, PUT, DELETE, HEAD, PATCH, OPTIONS
+Allowed headers include internal Istio: X-Forwarded-Client-Cert,
+  X-Envoy-Upstream-Service-Time, X-Envoy-Attempt-Count, X-Envoy-External-Address
+
+Chain: XSS or subdomain takeover on ANY *.nubank.com.br →
+  credentialed cross-origin requests to pix.nubank.com.br (PIX payments) +
+  prod-global-auth.nubank.com.br (auth tokens) + all customer data endpoints
+
+High-probability XSS entry points (CORS chain candidates):
+  comunidade.nubank.com.br → Bettermode community platform, user-generated content
+  blog.nubank.com.br → Next.js frontend, WordPress backend at backend.blog.nubank.com.br
+
+--------------------------------------------------------
+FINDING 3 - Staging Environments Accessible [LOW]
+--------------------------------------------------------
+  staging-www.nu.com.co - CloudFront 403
+    CSP reveals: frame-ancestors 'self' https://blog.nu.com.co
+  staging-global-webapp-proxy.nu.com.{mx,co} - 404
+  staging-www.rosetta-public-assets.nubank.com.br - 403
+
+--------------------------------------------------------
+FINDING 4 - Prod Proxy 502 Bad Gateway [INFO]
+--------------------------------------------------------
+  prod-global-green-webapp-proxy.nu.com.mx
+  Status: 502, Server: awselb/2.0
+
+--------------------------------------------------------
+INTERESTING ADDITIONAL FINDINGS
+--------------------------------------------------------
+
+  app.nubank.com.br / conta.nubank.com.br → 422 from Cloudflare Bot Mgmt
+    CSP reveals S3 buckets:
+    - nu-praja-official-letters-br-prod.s3.sa-east-1.amazonaws.com
+    - nu-praja-official-letters-quarantine-br-prod.s3.sa-east-1.amazonaws.com
+    Both return AccessDenied (not public). "Praja" = internal doc system name.
+
+  contracts.nu.com.co → S3 bucket via CloudFront
+    Public legal PDFs accessible:
+    - /legal-documents/nu-CF-authorization-policy-version-1.pdf (200, 90KB)
+    - /legal-documents/nu-CF-authorization-policy-version-2.pdf (200, 90KB)
+    - /legal-documents/nu-CF-authorization-policy-version-3.pdf (200, 90KB)
+    These are intentionally public legal docs (CF = Colombia).
+    IDOR testing for customer-specific contracts needs valid account.
+
+  keygen.share.nubank.com.br (GitHub Pages)
+    SFTP key generation tool for Nubank partners
+    access-control-allow-origin: * (expected for GitHub Pages static site)
+    Uses window.crypto.subtle (secure) for 4096-bit RSA key gen
+    Uses Math.random() for filename only (not key material) - low risk
+
+  recommend.nu.com.mx → Direct S3 bucket (AmazonS3 server header)
+    / → 200, 1 byte (placeholder)
+    Subdirs: AccessDenied
+
+  fp.nubank.com.br → Cloudflare FingerprintPro endpoint
+    200 with 0 bytes, CSP: default-src 'none'; frame-ancestors 'none'
+    Used for bot detection on app.nubank.com.br
+
+  backend.blog.nubank.com.br (WordPress)
+    /wp-login.php → 200 (login accessible, no IP restriction)
+    /wp-json/ → 200 (REST API open)
+    /wp-json/wp/v2/users → 404 (user enumeration disabled - good)
+    /wp-json/jetpack/v4/connection → 200 (Jetpack active, isStaging: false)
+    Custom REST endpoints: /wp/v2/redirects, /wp/v2/get-saved-acf, etc.
+    Namespaces: jetpack/v4, akismet/v1, redirection/v1, yoast/v1, vip/v1 (WordPress VIP)
+    Note: WordPress VIP = enterprise hosting with strict security controls
+
+  comunidade.nubank.com.br (Bettermode/Tribe platform)
+    Third-party keys in window.RuntimeConfigs (Bettermode's keys, not Nubank):
+    - UNSPLASH_ACCESS_KEY exposed (Bettermode shared key)
+    - GIPHY_API_KEY exposed (Bettermode shared key)
+    - FIREBASE_API_KEY exposed (tribeplatform.firebaseapp.com, Bettermode's Firebase)
+    - SEGMENT_WRITE_KEY exposed (Bettermode shared key)
+    NOT in Nubank scope — these are Bettermode's infrastructure keys.
+    CORS chain risk: XSS here → credentialed requests to all prod-* endpoints.
+
+--------------------------------------------------------
+CONFIRMED NOT VULNERABLE
+--------------------------------------------------------
+  HubSpot subdomains (blogenterprise, lpenterprise, etc.)
+    NOT takeover - HubSpot account 7528302 still active
+  JWT None Algorithm on comunidade.nubank.com.br
+    FALSE POSITIVE - SPA HTML returned for all /api/* routes
+  CORS misconfigurations (standard type) - None
+  Exposed sensitive files (.env, .git) - None found
+  S3 bucket listing - Not enabled on any bucket
+  403 bypass on app.nubank.com.br - All return 422 (Cloudflare Bot Mgmt)
+  WordPress user enumeration on backend.blog.nubank.com.br - Blocked
+
+--------------------------------------------------------
+NEXT STEPS (requires valid account with CPF/CURP/NIT)
+--------------------------------------------------------
+  1. Create test account, get auth tokens
+  2. Test IDOR on account/profile endpoints
+  3. Test PIX payment business logic (pix.nubank.com.br)
+  4. Test auth bypass on prod-* microservices
+  5. Test rate limiting on prod-global-auth endpoints
+  6. Check app.nubank.com.br with valid session cookie
+  7. Test contracts.nu.com.co for customer-specific document IDOR
+  8. Investigate deeper XSS on comunidade.nubank.com.br (CORS chain)
+  9. Test open redirect on blog.nubank.com.br /busca/ search
+
+--------------------------------------------------------
+CHAIN ANALYSIS
+--------------------------------------------------------
+Finding 2 (CORS) + Finding 1 (service map) = HIGH → CRITICAL chain:
+  → Any XSS on *.nubank.com.br → CORS-trusted → credentialed
+    access to PIX + auth + customers (all endpoints in Finding 1)
+
+Finding 2 + Subdomain Takeover (any *.nubank.com.br dangling CNAME)
+  → Same critical chain without needing XSS
+
+Finding 2 + valid account
+  → Test authenticated IDOR/business logic on prod-* from browser
+
+Best reports to submit now:
+  [✓] Finding 1 - bugcrowd_finding1.md (P3 Medium)
+  [✓] Finding 2 - bugcrowd_finding2_cors.md (P2 High → P1 if chained)
+
+========================================================
