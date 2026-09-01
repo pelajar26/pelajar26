@@ -190,3 +190,78 @@ Best reports to submit now:
   [✓] Finding 2 - bugcrowd_finding2_cors.md (P2 High → P1 if chained)
 
 ========================================================
+
+--------------------------------------------------------
+EXTENDED RECON — SESSION 3 (2026-09-01)
+--------------------------------------------------------
+
+FINDING 2 AMPLIFIERS (added to bugcrowd_finding2_cors_addendum.md):
+  HTTP origins also reflected (not just HTTPS):
+    Origin: http://evil.nubank.com.br → ACAO: http://evil.nubank.com.br + credentials: true
+  Nested subdomains all trusted (any depth):
+    Origin: https://a.b.c.nubank.com.br → reflected + credentials: true
+  Custom ports trusted:
+    Origin: https://evil.nubank.com.br:8443 → reflected + credentials: true
+  
+  Additional services confirmed affected:
+    prod-global-magnitude.nu.com.mx (payment processing) → CORS misconfigured
+    prod-global-webapp-proxy.nubank.com.br (Cloudflare-fronted) → CORS misconfigured
+
+NEW: gRPC Service Discovered [INFO/adds to Finding 1]
+  prod-global-ouroboros.nu.com.mx
+  Protocol: gRPC (grpc-status: 16 = UNAUTHENTICATED)
+  Reflection: /grpc.reflection.v1alpha.* accessible (auth required at gRPC level)
+  Impact: With auth, service method/message definitions would be exposed via reflection
+
+SUBDOMAIN TAKEOVER: None found
+  201 subdomains checked: 29 NXDOMAIN, 172 resolved
+  NXDOMAIN subdomains have no CNAME records (no dangling external pointers)
+  recommend.nubank.com.br → S3 (NoSuchWebsiteConfiguration, bucket exists)
+  keygen.share.nubank.com.br → GitHub Pages (active, 200)
+  docs.share.nubank.com.br → GitHub Pages (active, 200)
+
+S3 BUCKETS:
+  recommend.nubank.com.br → S3 (bucket exists, no website config, not takeover)
+  prod-cdn.nubank.com.br → CloudFront + S3 (403 AccessDenied)
+  rosetta-public-assets.nubank.com.br → CloudFront signed URLs (403 without key)
+  pilar3.nubank.com.br → S3 via CloudFront (403)
+  openfinance.nubank.com.br → S3 via CloudFront (403)
+  estagio.nubank.com.br → S3 (200 - internship site, Ashby jobs integration only)
+
+OpenBanking API (openbanking.api.nubank.com.br):
+  Public: /open-banking/discovery/v1/status (200 OK)
+  Public: /open-banking/discovery/v1/outages (200)
+  Public: /open-banking/channels/v1/branches (200 - regulated public data)
+  Customer: /open-banking/accounts/v2/accounts → "invalid client certificate" (mTLS required)
+  CORS: No CORS headers (correctly restricted)
+  Note: OpenBanking public data is regulatory-mandated, not a vulnerability
+
+INTERESTING STACK INFO:
+  prod-global-pont-du-gard.nubank.com.br → 502 Bad Gateway (not Istio, different stack)
+  prod-global-open-banking-proxy.nubank.com.br → openresty/1.31.1.1 (not Istio)
+  prod-global-arcus-client.nu.com.mx → 502 (ARCUS = Mexico bill payment processor)
+  prod-proxy-dimo.nu.com.mx → 502 (DIMO = Mexico banking interoperability system)
+  prod-global-webapp-proxy.nu.com.mx → Cloudflare 404
+  prod-global-webapp-proxy.nubank.com.br → Cloudflare CORS REFLECTED (finding 2 scope)
+  
+CONFIRMED NOT VULNERABLE (extended):
+  gRPC reflection on ouroboros → auth required at gRPC level
+  Bitwarden (bitwarden.nu.com.mx) → 502 (not accessible)
+  Zammad (zammad.nubank.com.br) → TLS tunnel only, no HTTP response
+  denunciargolpes.nubank.com.br → ContatoSeguro third-party platform (out of scope)
+  WordPress comments unauthenticated submission → requires valid post ID + blocked
+  OpenBanking customer APIs → mTLS enforced correctly
+  Host header injection → 530 Cloudflare error (TLS SNI mismatch)
+  Subdomain takeover → no dangling CNAMEs found
+
+PENDING (requires account):
+  gRPC reflection on ouroboros (once authenticated)
+  IDOR on prod-s*-customers, prod-s*-magnitude endpoints
+  PIX payment flow testing on pix.nubank.com.br
+  Auth token extraction via CORS chain (needs XSS or subdomain control)
+  Blog comment XSS via WordPress REST API (requires auth context)
+
+BEST REPORTS NOW:
+  [✓] bugcrowd_finding1.md - P3 (service enumeration)
+  [✓] bugcrowd_finding2_cors.md - P2 High / P1 chained
+  [✓] bugcrowd_finding2_cors_addendum.md - P1 amplifiers
