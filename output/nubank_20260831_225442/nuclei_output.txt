@@ -1,0 +1,5 @@
+[jwt-none-algorithm] [http] [critical] https://comunidade.nubank.com.br/api/me
+[jwt-none-algorithm] [http] [critical] https://comunidade.nubank.com.br/api/user
+[jwt-none-algorithm] [http] [critical] https://comunidade.nubank.com.br/api/profile
+[jwt-none-algorithm] [http] [critical] https://comunidade.nubank.com.br/api/v1/me
+[jwt-none-algorithm] [http] [critical] https://comunidade.nubank.com.br/api/v1/user

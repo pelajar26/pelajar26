@@ -1,0 +1,103 @@
+========================================================
+ NUBANK BUG BOUNTY RECON — SCAN SUMMARY
+ Scope: *.nubank.com.br *.nu.com.mx *.nu.com.co *.nuinvest.com.br
+========================================================
+
+Header used: X-Correlation-Id: bc-handle
+Mode: Passive + gentle active (low rate, with delays)
+
+--------------------------------------------------------
+STATISTICS
+--------------------------------------------------------
+Subdomains found    : 201
+DNS resolved        : 172
+Live hosts          : 146
+  200 OK            : 20
+  401 API           : 65
+  403               : 17
+  301/302 redirect  : 16
+  404               : 22
+  Other             : 6
+
+--------------------------------------------------------
+FINDING 1 - Internal Microservice Enumeration [MEDIUM]
+--------------------------------------------------------
+65 production API endpoints publicly DNS-resolvable.
+All return 401 (auth required) but names are exposed.
+
+Services found:
+  prod-global-auth.{nubank.com.br, nu.com.mx, nu.com.co}
+  prod-global-app-config.nubank.com.br
+  prod-global-magnitude.nu.com.mx
+  prod-global-ouroboros.nu.com.mx
+  prod-s{0-19}-{blade-runner, customers, fog-wall,
+    magic-screen, magnitude, milli-vanilli, nuddynho,
+    rosetta, shore, telefonista, ...}
+
+Stack: server = istio-envoy (Istio service mesh)
+Pattern: prod-s{shard}-{name}.{region-domain}
+
+Impact: Full internal service map exposed. Attacker can
+target specific services for auth bypass attacks.
+
+--------------------------------------------------------
+FINDING 2 - Staging Environments Accessible [LOW]
+--------------------------------------------------------
+  staging-www.nu.com.co - CloudFront 403
+    CSP reveals: frame-ancestors 'self' https://blog.nu.com.co
+  staging-global-webapp-proxy.nu.com.mx - 404
+  staging-global-webapp-proxy.nu.com.co - 404
+  staging-www.rosetta-public-assets.nubank.com.br - 403
+
+--------------------------------------------------------
+FINDING 3 - Prod Proxy 502 Bad Gateway [INFO]
+--------------------------------------------------------
+  prod-global-green-webapp-proxy.nu.com.mx
+  Status: 502, Server: awselb/2.0
+  Misconfigured ELB backend on production proxy.
+
+--------------------------------------------------------
+INTERESTING - Needs Account to Test
+--------------------------------------------------------
+  keygen.share.nubank.com.br
+    SFTP Key Pair Tool (GitHub Pages, public)
+    access-control-allow-origin: * (wildcard CORS)
+    Partner tool to generate SSH keys for Nubank SFTP
+
+  pix.nubank.com.br - 401 (PIX payment API)
+  prod-global-app-config.nubank.com.br - 401
+
+--------------------------------------------------------
+CONFIRMED NOT VULNERABLE
+--------------------------------------------------------
+  HubSpot subdomains (blogenterprise, lpenterprise, etc.)
+    NOT takeover - HubSpot account 7528302 still active
+
+  JWT None Algorithm on comunidade.nubank.com.br
+    FALSE POSITIVE - SPA HTML returned for all /api/* routes
+
+  CORS misconfigurations - None found
+  Exposed sensitive files (.env, .git) - None found
+  S3 bucket listing - Not enabled
+
+--------------------------------------------------------
+NEXT STEPS (requires valid account with CPF/CURP/NIT)
+--------------------------------------------------------
+  1. Create test account, get auth tokens
+  2. Test IDOR on account/profile endpoints
+  3. Test PIX payment business logic (pix.nubank.com.br)
+  4. Test auth bypass on prod-* microservices
+  5. Test rate limiting on prod-global-auth endpoints
+  6. Check app.nubank.com.br with valid session cookie
+
+========================================================
+CONCLUSION
+========================================================
+No critical/high severity vuln from unauthenticated recon.
+
+Primary attack surface: 65 prod-* API endpoints
+Most promising for critical findings:
+  - Auth bypass on any prod-* microservice
+  - IDOR / business logic with valid account
+  - PIX payment manipulation
+========================================================
