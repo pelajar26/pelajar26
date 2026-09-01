@@ -171,3 +171,35 @@ curl -sv "https://prod-global-auth.nubank.com.br/" \
 - CSP headers were retrieved via HEAD/GET requests — no interaction with user-generated content
 - CORS confirmation used a test origin to verify server reflection behavior
 - All requests included `X-Correlation-Id: bc-handle` as required
+
+---
+
+## Addendum — app.nubank.com.br CSP Also Uses *.nubank.com.br Wildcard in script-src
+
+**Request:**
+```bash
+curl -sI "https://app.nubank.com.br/" -H "X-Correlation-Id: bc-handle"
+```
+
+**CSP Header:**
+```
+content-security-policy:
+  default-src 'self' *.nubank.com.br ...;
+  script-src 'self' nubank.com.br *.nubank.com.br googletagmanager.com *.googletagmanager.com ...
+```
+
+**Issue:** The main Nubank web application (`app.nubank.com.br`) trusts scripts from ANY `*.nubank.com.br` subdomain via `script-src *.nubank.com.br`. This means:
+
+1. If an attacker can host a malicious JavaScript file on ANY subdomain of `nubank.com.br` (e.g., via a file upload vulnerability on `blog.nubank.com.br`, or by serving it from a compromised CDN subdomain), that file can be loaded by `app.nubank.com.br` pages.
+
+2. Combined with any XSS on `app.nubank.com.br` that allows injecting `<script src="...">` tags, the attacker could load their payload from a *.nubank.com.br subdomain, bypassing the CSP whitelist.
+
+**Additional Disclosure from CSP:**
+Two private S3 buckets disclosed in `default-src`:
+- `https://nu-praja-official-letters-br-prod.s3.sa-east-1.amazonaws.com` — production official letters
+- `https://nu-praja-official-letters-quarantine-br-prod.s3.sa-east-1.amazonaws.com` — quarantine letters
+
+These buckets are correctly configured (403 AccessDenied, not publicly listed), but their names are exposed in the public CSP header — confirming their existence and naming convention.
+
+**Remediation:**
+Replace `*.nubank.com.br` in `script-src` with explicit CDN/asset origins (e.g., `cdn.nubank.com.br`) — do not use wildcard for script loading. Apply nonces or hashes for inline scripts.
