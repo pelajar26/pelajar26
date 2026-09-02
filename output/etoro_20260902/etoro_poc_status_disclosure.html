@@ -1,0 +1,754 @@
+<title>eToro API Status Disclosure</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap">
+
+<style>
+  :root {
+    --bg: #07111f;
+    --surface: #0d1f35;
+    --card: #112340;
+    --border: #1e3a5f;
+    --border-bright: #2d5280;
+    --amber: #f59e0b;
+    --amber-dim: rgba(245,158,11,0.12);
+    --cyan: #22d3ee;
+    --cyan-dim: rgba(34,211,238,0.1);
+    --red: #ef4444;
+    --red-dim: rgba(239,68,68,0.15);
+    --green: #10b981;
+    --green-dim: rgba(16,185,129,0.1);
+    --text: #cbd5e1;
+    --text-muted: #64748b;
+    --text-bright: #e2e8f0;
+    --mono: 'JetBrains Mono', 'Fira Code', monospace;
+    --sans: 'Inter', system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  /* ─── Header ─── */
+  .header {
+    background: linear-gradient(135deg, #071829 0%, #0d2140 100%);
+    border-bottom: 1px solid var(--border-bright);
+    padding: 32px 40px 28px;
+    position: relative;
+    overflow: hidden;
+  }
+  .header::before {
+    content: '';
+    position: absolute;
+    top: -60px; right: -60px;
+    width: 200px; height: 200px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(245,158,11,0.06) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .severity-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: var(--amber-dim);
+    border: 1px solid rgba(245,158,11,0.3);
+    border-radius: 4px;
+    padding: 4px 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--amber);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  .severity-badge::before {
+    content: '';
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--amber);
+    box-shadow: 0 0 6px var(--amber);
+    flex-shrink: 0;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .header h1 {
+    font-family: var(--mono);
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--text-bright);
+    margin-bottom: 8px;
+    letter-spacing: -0.02em;
+  }
+  .header-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 24px;
+    margin-top: 16px;
+  }
+  .meta-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .meta-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+  .meta-value {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--cyan);
+  }
+
+  /* ─── Main layout ─── */
+  .main {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 36px 24px 60px;
+  }
+
+  /* ─── Section headings ─── */
+  .section-heading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--text-muted);
+    margin-bottom: 16px;
+    margin-top: 40px;
+  }
+  .section-heading::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* ─── Summary box ─── */
+  .summary {
+    background: var(--card);
+    border: 1px solid var(--border-bright);
+    border-left: 3px solid var(--amber);
+    border-radius: 6px;
+    padding: 20px 24px;
+    margin-bottom: 8px;
+  }
+  .summary p {
+    color: var(--text);
+    line-height: 1.7;
+    margin-bottom: 10px;
+  }
+  .summary p:last-child { margin-bottom: 0; }
+
+  /* ─── Endpoint cards ─── */
+  .endpoint-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 24px;
+    overflow: hidden;
+  }
+  .endpoint-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    background: rgba(255,255,255,0.02);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .endpoint-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .http-badge {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 3px;
+    background: var(--green-dim);
+    color: var(--green);
+    border: 1px solid rgba(16,185,129,0.25);
+    letter-spacing: 0.05em;
+  }
+  .endpoint-url {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--cyan);
+    word-break: break-all;
+  }
+  .auth-badge {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 3px;
+    background: var(--red-dim);
+    color: var(--red);
+    border: 1px solid rgba(239,68,68,0.25);
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+  }
+
+  .endpoint-body {
+    padding: 0;
+  }
+
+  /* ─── Two column layout ─── */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+  }
+  @media (max-width: 700px) {
+    .two-col { grid-template-columns: 1fr; }
+  }
+  .col-left { border-right: 1px solid var(--border); }
+
+  .col-label {
+    padding: 10px 16px 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0,0,0,0.15);
+  }
+
+  /* ─── Code blocks ─── */
+  pre {
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.65;
+    padding: 14px 16px;
+    overflow-x: auto;
+    color: var(--text);
+    background: transparent;
+  }
+  .code-comment { color: #4a6a8a; }
+  .code-key { color: #7dd3fc; }
+  .code-string { color: #86efac; }
+  .code-number { color: #fbbf24; }
+  .code-highlight {
+    background: var(--red-dim);
+    color: var(--red);
+    border-radius: 2px;
+    padding: 0 3px;
+    font-weight: 600;
+  }
+  .code-amber {
+    color: var(--amber);
+    font-weight: 600;
+  }
+
+  /* ─── Data leaked table ─── */
+  .leaked-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 12px;
+    margin: 0;
+  }
+  .leaked-table th {
+    text-align: left;
+    padding: 8px 14px;
+    background: rgba(0,0,0,0.2);
+    color: var(--text-muted);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+  }
+  .leaked-table td {
+    padding: 8px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    vertical-align: top;
+  }
+  .leaked-table tr:last-child td { border-bottom: none; }
+  .field-name { color: var(--cyan); }
+  .field-value { color: var(--red); word-break: break-all; }
+  .field-risk { color: var(--text-muted); }
+
+  /* ─── Attack scenario ─── */
+  .scenario-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .scenario-card {
+    background: rgba(0,0,0,0.2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+  }
+  .scenario-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--amber);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 6px;
+  }
+  .scenario-desc {
+    font-size: 12.5px;
+    color: var(--text-muted);
+    line-height: 1.6;
+  }
+
+  /* ─── Network map ─── */
+  .network-map {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+  .network-map-header {
+    padding: 10px 16px;
+    background: rgba(0,0,0,0.2);
+    border-bottom: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .network-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .network-table th {
+    text-align: left;
+    padding: 8px 16px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: rgba(0,0,0,0.15);
+  }
+  .network-table td {
+    padding: 10px 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    vertical-align: top;
+  }
+  .network-table tr:last-child td { border-bottom: none; }
+  .net-service { color: var(--cyan); font-weight: 500; }
+  .net-host { color: var(--text-muted); }
+  .net-ip { color: var(--red); font-weight: 600; }
+  .net-pod { color: var(--amber); }
+  .net-version { color: #86efac; }
+  .net-severity {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+  }
+  .sev-high { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.25); }
+  .sev-kcy { background: rgba(239,68,68,0.2); color: #fca5a5; border: 1px solid rgba(239,68,68,0.35); }
+
+  /* ─── Remediation ─── */
+  .remediation-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .remediation-list li {
+    display: flex;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+    align-items: flex-start;
+  }
+  .remediation-list li:last-child { border-bottom: none; }
+  .rem-num {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--bg);
+    background: var(--amber);
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .rem-text {
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.6;
+  }
+  .rem-text strong { color: var(--text-bright); font-weight: 600; }
+  .rem-code {
+    display: block;
+    font-family: var(--mono);
+    font-size: 11px;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin-top: 8px;
+    color: #86efac;
+    overflow-x: auto;
+  }
+
+  /* ─── Footer ─── */
+  .footer {
+    text-align: center;
+    padding: 20px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    margin-top: 40px;
+  }
+
+  /* ─── Divider ─── */
+  .divider {
+    height: 1px;
+    background: var(--border);
+    margin: 0;
+  }
+</style>
+
+<!-- ─── Header ─── -->
+<div class="header">
+  <div class="severity-badge">P2 High · CVSS 7.5 · Information Disclosure</div>
+  <h1>eToro Internal Infrastructure Disclosure<br>via Unauthenticated API Status Endpoints</h1>
+  <div class="header-meta">
+    <div class="meta-item">
+      <span class="meta-label">Program</span>
+      <span class="meta-value">eToro — Bugcrowd</span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-label">Reporter</span>
+      <span class="meta-value">komeng rooket</span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-label">Scope</span>
+      <span class="meta-value">*.etoro.com</span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-label">Services Affected</span>
+      <span class="meta-value">3 Microservices (Systemic)</span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-label">Discovered</span>
+      <span class="meta-value">2026-09-02</span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-label">Auth Required</span>
+      <span class="meta-value" style="color:var(--red)">None</span>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Main ─── -->
+<div class="main">
+
+  <div class="summary">
+    <p>Three production eToro microservices expose diagnostic health-check endpoints that return sensitive internal infrastructure data without any authentication. Any unauthenticated HTTP client can enumerate Kubernetes pod IPs, pod names, deployed git commits, .NET runtime versions, and Azure Kubernetes cluster regions for three distinct services — including the KYC Proxy, which sits in front of eToro's identity verification pipeline.</p>
+    <p>This is a <strong style="color:var(--text-bright)">systemic misconfiguration</strong> across eToro's ASP.NET Core microservices platform, where the diagnostic status middleware is bound on public ingress routes without authentication or IP allowlisting, as opposed to the internal Kubernetes liveness/readiness probe network where it belongs.</p>
+  </div>
+
+  <!-- ─── Network Map ─── -->
+  <div class="section-heading">Exposed Internal Network</div>
+  <div class="network-map">
+    <div class="network-map-header">Kubernetes Pod Network — Discovered via Unauthenticated Endpoints</div>
+    <table class="network-table">
+      <thead>
+        <tr>
+          <th>Application</th>
+          <th>Public Host</th>
+          <th>Internal Pod IP</th>
+          <th>Pod Name</th>
+          <th>Version</th>
+          <th>Sensitivity</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="net-service">Partners / AffAPI</td>
+          <td class="net-host">affapi.etoro.com</td>
+          <td class="net-ip">10.203.85.110</td>
+          <td class="net-pod">aff-api-f-5f5dbd5f7b-bjpq5</td>
+          <td class="net-version">v1.24.0</td>
+          <td><span class="net-severity sev-high">HIGH</span></td>
+        </tr>
+        <tr>
+          <td class="net-service">ClientLogsApi</td>
+          <td class="net-host">etorologsapi.etoro.com</td>
+          <td class="net-ip">10.204.83.206</td>
+          <td class="net-pod">client-logs-api-5bcdc6765-64fgm</td>
+          <td class="net-version">1.2.1-27-234a5fd</td>
+          <td><span class="net-severity sev-high">HIGH</span></td>
+        </tr>
+        <tr>
+          <td class="net-service">KYCProxy</td>
+          <td class="net-host">kyc.etoro.com</td>
+          <td class="net-ip">10.204.73.117</td>
+          <td class="net-pod">kycproxy-67f6b98b68-xlx7b</td>
+          <td class="net-version">v1.219.0</td>
+          <td><span class="net-severity sev-kcy">CRITICAL SERVICE</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ─── Endpoint 1: affapi ─── -->
+  <div class="section-heading">Proof of Concept — Endpoint 1</div>
+  <div class="endpoint-card">
+    <div class="endpoint-header">
+      <div class="endpoint-title">
+        <span class="http-badge">HTTP 200</span>
+        <span class="endpoint-url">https://affapi.etoro.com/api/status</span>
+      </div>
+      <span class="auth-badge">NO AUTH REQUIRED</span>
+    </div>
+    <div class="endpoint-body">
+      <div class="two-col">
+        <div class="col-left">
+          <div class="col-label">Request</div>
+          <pre><span class="code-comment"># No Authorization header required</span>
+curl -s https://affapi.etoro.com/api/status \
+  -H <span class="code-string">"X-Bug-Bounty: komeng rooket"</span></pre>
+        </div>
+        <div>
+          <div class="col-label">Response (200 OK)</div>
+          <pre>{
+  <span class="code-key">"application"</span>: {
+    <span class="code-key">"applicationName"</span>: <span class="code-string">"Partners"</span>,
+    <span class="code-key">"teamName"</span>: <span class="code-string">"OnboardingTeam"</span>,
+    <span class="code-key">"uptimeInSeconds"</span>: <span class="code-number">2073778.0</span>
+  },
+  <span class="code-key">"environment"</span>: {
+    <span class="code-key">"region"</span>: <span class="code-amber">"NorthEur"</span>,
+    <span class="code-key">"machineName"</span>: <span class="code-highlight">"aff-api-f-5f5dbd5f7b-bjpq5"</span>,
+    <span class="code-key">"machineIp"</span>: <span class="code-highlight">"10.203.85.110"</span>
+  },
+  <span class="code-key">"version"</span>: {
+    <span class="code-key">"version"</span>: <span class="code-amber">"v1.24.0"</span>,
+    <span class="code-key">"infraVersion"</span>: <span class="code-amber">"8.0.7+ba53e65a2341..."</span>,
+    <span class="code-key">"commit"</span>: <span class="code-highlight">"52f56ce4111d6e947cd829d..."</span>,
+    <span class="code-key">"branch"</span>: <span class="code-string">"main"</span>
+  },
+  <span class="code-key">"statusCode"</span>: <span class="code-number">200</span>
+}</pre>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <table class="leaked-table">
+        <tr>
+          <th>Field</th><th>Value Leaked</th><th>Risk</th>
+        </tr>
+        <tr>
+          <td class="field-name">machineIp</td>
+          <td class="field-value">10.203.85.110</td>
+          <td class="field-risk">Internal Kubernetes pod IP — direct SSRF pivot target</td>
+        </tr>
+        <tr>
+          <td class="field-name">machineName</td>
+          <td class="field-value">aff-api-f-5f5dbd5f7b-bjpq5</td>
+          <td class="field-risk">Kubernetes pod name — reveals deployment and ReplicaSet naming scheme</td>
+        </tr>
+        <tr>
+          <td class="field-name">commit</td>
+          <td class="field-value">52f56ce4111d6e947cd829d657e90f0bba47e2af</td>
+          <td class="field-risk">Git commit hash — correlatable with source code leaks or CI history</td>
+        </tr>
+        <tr>
+          <td class="field-name">infraVersion</td>
+          <td class="field-value">.NET 8.0.7</td>
+          <td class="field-risk">Runtime version — enables version-specific exploit targeting</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- ─── Endpoint 2: etorologsapi ─── -->
+  <div class="section-heading">Proof of Concept — Endpoint 2</div>
+  <div class="endpoint-card">
+    <div class="endpoint-header">
+      <div class="endpoint-title">
+        <span class="http-badge">HTTP 200</span>
+        <span class="endpoint-url">https://etorologsapi.etoro.com/api/v2/status</span>
+      </div>
+      <span class="auth-badge">NO AUTH REQUIRED</span>
+    </div>
+    <div class="endpoint-body">
+      <div class="two-col">
+        <div class="col-left">
+          <div class="col-label">Request</div>
+          <pre><span class="code-comment"># Kestrel (.NET) — not behind Cloudflare</span>
+curl -s https://etorologsapi.etoro.com/api/v2/status \
+  -H <span class="code-string">"X-Bug-Bounty: komeng rooket"</span></pre>
+        </div>
+        <div>
+          <div class="col-label">Response (200 OK)</div>
+          <pre>{
+  <span class="code-key">"application"</span>: {
+    <span class="code-key">"ApplicationName"</span>: <span class="code-string">"ClientLogsApi"</span>,
+    <span class="code-key">"UptimeInSeconds"</span>: <span class="code-number">7243.0</span>
+  },
+  <span class="code-key">"environment"</span>: {
+    <span class="code-key">"Region"</span>: <span class="code-amber">"WestEurope"</span>,
+    <span class="code-key">"MachineName"</span>: <span class="code-highlight">"client-logs-api-5bcdc6765-64fgm"</span>,
+    <span class="code-key">"MachineIp"</span>: <span class="code-highlight">"10.204.83.206"</span>
+  },
+  <span class="code-key">"version"</span>: {
+    <span class="code-key">"Version"</span>: <span class="code-amber">"1.2.1-27-234a5fd"</span>,
+    <span class="code-key">"InfraVersion"</span>: <span class="code-amber">"8.0.3+79f6f56d1..."</span>,
+    <span class="code-key">"Commit"</span>: <span class="code-highlight">"234a5fd42380da35679953b..."</span>,
+    <span class="code-key">"Branch"</span>: <span class="code-string">"origin/master"</span>
+  },
+  <span class="code-key">"statusCode"</span>: <span class="code-number">200</span>
+}</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Endpoint 3: kyc ─── -->
+  <div class="section-heading">Proof of Concept — Endpoint 3 (Highest Sensitivity)</div>
+  <div class="endpoint-card" style="border-color: rgba(239,68,68,0.3);">
+    <div class="endpoint-header" style="background: rgba(239,68,68,0.05);">
+      <div class="endpoint-title">
+        <span class="http-badge">HTTP 200</span>
+        <span class="endpoint-url">https://kyc.etoro.com/api/status</span>
+      </div>
+      <span class="auth-badge">NO AUTH REQUIRED</span>
+    </div>
+    <div class="endpoint-body">
+      <div class="two-col">
+        <div class="col-left">
+          <div class="col-label">Request</div>
+          <pre><span class="code-comment"># KYC = Know Your Customer identity service</span>
+<span class="code-comment"># Handles government ID, biometric verification</span>
+curl -s https://kyc.etoro.com/api/status \
+  -H <span class="code-string">"X-Bug-Bounty: komeng rooket"</span></pre>
+        </div>
+        <div>
+          <div class="col-label">Response (200 OK)</div>
+          <pre>{
+  <span class="code-key">"application"</span>: {
+    <span class="code-key">"applicationName"</span>: <span class="code-string">"KYCProxy"</span>,
+    <span class="code-key">"uptimeInSeconds"</span>: <span class="code-number">604066.0</span>
+  },
+  <span class="code-key">"environment"</span>: {
+    <span class="code-key">"region"</span>: <span class="code-amber">"WestEur"</span>,
+    <span class="code-key">"machineName"</span>: <span class="code-highlight">"kycproxy-67f6b98b68-xlx7b"</span>,
+    <span class="code-key">"machineIp"</span>: <span class="code-highlight">"10.204.73.117"</span>
+  },
+  <span class="code-key">"version"</span>: {
+    <span class="code-key">"version"</span>: <span class="code-amber">"v1.219.0"</span>,
+    <span class="code-key">"infraVersion"</span>: <span class="code-amber">"10.2.8+9a28f18892..."</span>,
+    <span class="code-key">"chartVersion"</span>: <span class="code-amber">"v1.217.0"</span>,
+    <span class="code-key">"commit"</span>: <span class="code-highlight">"bab5d0260bc3b6c574f6f34b..."</span>,
+    <span class="code-key">"branch"</span>: <span class="code-string">"master"</span>
+  },
+  <span class="code-key">"statusCode"</span>: <span class="code-number">200</span>
+}</pre>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div style="padding: 12px 16px; background: var(--red-dim); border-top: none;">
+        <div style="font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--red); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.06em;">⚠ Elevated Risk — KYC Identity Pipeline</div>
+        <p style="font-size: 12.5px; color: var(--text); line-height: 1.6;">The <strong style="color:#fca5a5">KYCProxy</strong> application sits between eToro's partner portal and the third-party identity verification provider. This service processes government-issued documents, passport/ID scans, and biometric data for regulatory KYC compliance. Exposing this service's internal pod IP (<strong style="color:var(--red)">10.204.73.117</strong>) and Helm chart version (<strong style="color:var(--red)">v1.217.0</strong>) on an unauthenticated endpoint is the most sensitive instance of this systemic issue.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Attack Scenarios ─── -->
+  <div class="section-heading">Attack Scenarios</div>
+  <div class="scenario-grid">
+    <div class="scenario-card">
+      <div class="scenario-title">⊕ SSRF Amplification</div>
+      <div class="scenario-desc">Disclosed pod IPs (10.203.85.110, 10.204.83.206, 10.204.73.117) provide concrete SSRF pivot targets if any other eToro endpoint accepts user-controlled URLs — no guessing of internal address ranges needed.</div>
+    </div>
+    <div class="scenario-card">
+      <div class="scenario-title">⊕ Version Exploitation</div>
+      <div class="scenario-desc">Exact .NET versions (8.0.7, 8.0.3, 10.2.8) and application versions enable targeted CVE research against the specific runtime and framework versions deployed in production.</div>
+    </div>
+    <div class="scenario-card">
+      <div class="scenario-title">⊕ Git Correlation</div>
+      <div class="scenario-desc">Full git commit hashes from three services, correlated with any source code leaks, GitHub Actions logs, or developer repos, can map deployed code to source history — revealing unpatched commits.</div>
+    </div>
+    <div class="scenario-card">
+      <div class="scenario-title">⊕ Topology Mapping</div>
+      <div class="scenario-desc">Pod naming convention (aff-api-f-*, client-logs-api-*, kycproxy-*) reveals Kubernetes deployment names, enabling inference of additional undiscovered services by pattern extrapolation.</div>
+    </div>
+  </div>
+
+  <!-- ─── Remediation ─── -->
+  <div class="section-heading">Remediation</div>
+  <div class="summary">
+    <ul class="remediation-list">
+      <li>
+        <span class="rem-num">1</span>
+        <div class="rem-text">
+          <strong>Restrict status routes to internal Kubernetes probe network only.</strong> Apply a Kubernetes NetworkPolicy or NGINX ingress annotation so only the kubelet's probe address range can reach <code>/api/status</code> and <code>/api/v1/status</code>. No public ingress route should expose these paths.
+          <span class="rem-code">ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8"</span>
+        </div>
+      </li>
+      <li>
+        <span class="rem-num">2</span>
+        <div class="rem-text">
+          <strong>Sanitize the status response on any externally-facing health endpoint.</strong> If an external load-balancer probe genuinely requires an HTTP 200, return only <code>{"status":"healthy"}</code> — strip machineName, machineIp, commit, branch, infraVersion, and chartVersion entirely.
+        </div>
+      </li>
+      <li>
+        <span class="rem-num">3</span>
+        <div class="rem-text">
+          <strong>Add authentication middleware to diagnostic routes.</strong> If the diagnostic endpoints must remain public-facing for operational monitoring, protect them with an internal service token or mTLS.
+        </div>
+      </li>
+      <li>
+        <span class="rem-num">4</span>
+        <div class="rem-text">
+          <strong>Audit all other eToro microservices</strong> using the same ASP.NET Core middleware pattern for the same unauthenticated status endpoint exposure. The naming convention of the affected services suggests a shared service template or base class — fix it in the template, not service-by-service.
+        </div>
+      </li>
+    </ul>
+  </div>
+
+</div>
+
+<div class="footer">
+  eToro Bug Bounty · Bugcrowd Program · Reporter: komeng rooket · 2026-09-02
+</div>
