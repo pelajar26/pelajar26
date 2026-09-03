@@ -330,10 +330,11 @@ The following were identified but not tested (out-of-scope per program rules):
 
 ## F-006: Auth0 redirect_uri Prefix Match Bypass + PKCE Not Enforced
 
-**Severity:** MEDIUM — P3 (escalates to HIGH/P2 if open redirect confirmed on trade.coindesk.com)  
-**Targets:**  
-- Production: `auth.coindesk.com`, client `eNCm4Q6PI4nKRF8jUuoOGHGVDJGsX8kt` (trade.coindesk.com)  
-- Staging: `staging.auth.coindesk.com`, client `HdXIA4sBorg8INLWJLJQdmac5YUodK1f` (trade-simnext.coindesk.com)  
+**Severity:** MEDIUM — P3 (escalates to HIGH/P2 if open redirect confirmed on any callback application)  
+**Targets (all production `auth.coindesk.com`):**  
+- Client `eNCm4Q6PI4nKRF8jUuoOGHGVDJGsX8kt` — trade.coindesk.com (crypto exchange)  
+- Client `O1UvcMKe5YNeV1fk7uvCCYt4p9w2s0ns` — developers.coindesk.com (API key portal)  
+- Staging `staging.auth.coindesk.com`, client `HdXIA4sBorg8INLWJLJQdmac5YUodK1f` — trade-simnext.coindesk.com  
 **Category:** OAuth 2.0 Misconfiguration — redirect_uri Validation Bypass + Missing PKCE Enforcement  
 **CVSS:** 6.1 (Medium) standalone — 8.0 (High) with open redirect
 
@@ -453,11 +454,56 @@ staging.auth.coindesk.com + client HdXIA4sBorg8INLWJLJQdmac5YUodK1f:
 
 ---
 
+## F-007: `developers.coindesk.com` Exposes Internal Infrastructure via Client-Side Runtime Config
+
+**Severity:** INFORMATIONAL  
+**Target:** `developers.coindesk.com`  
+**Category:** Information Disclosure
+
+### Description
+
+The Nuxt.js developer portal at `developers.coindesk.com` embeds its full runtime configuration in the HTML response body via `window.__NUXT__.config`, making all configuration values accessible without authentication:
+
+```javascript
+window.__NUXT__.config = {
+  public: {
+    URL_AUTH_API: "https://auth-api.cryptocompare.com",
+    URL_AUTH_API_COINDESK: "https://auth-api.coindesk.com",
+    URL_MIN_API: "https://min-api.cryptocompare.com",
+    URL_DATA_API: "https://data-api.cryptocompare.com",
+    URL_DATA_API_COINDESK: "https://data-api.coindesk.com",
+    URL_APP_BASE: "https://developers.cryptocompare.com",
+    URL_APP_BASE_CCDATA: "https://developers.ccdata.io",
+    TAXAMO_PUBLIC_KEY: "public_Wi8s4N_4-ZvxPyvb2E98HmBcdUED6SPgTQPQ_4wdP9Y",
+    PRODUCTION_MODE: true,
+    NUXT_PUBLIC_AUTH0_DOMAIN: "https://auth.coindesk.com",
+    NUXT_PUBLIC_AUTH0_CLIENT_ID: "O1UvcMKe5YNeV1fk7uvCCYt4p9w2s0ns",
+    NUXT_PUBLIC_AUTH0_CALLBACK_URL: "https://developers.coindesk.com/auth/callback",
+    NUXT_PUBLIC_AUTH0_CONNECTION: "Bullish",
+    GTM_ID: "GTM-P4GRS3M",
+    GOOGLE_ANALYTICS_ID: "G-5TES80EC21"
+  }
+}
+```
+
+This reveals:
+- Multiple previously undisclosed infrastructure endpoints (`auth-api.coindesk.com`, `min-api.cryptocompare.com`, `data-api.ccdata.io`)
+- Auth0 client ID for the developer portal (`O1UvcMKe5YNeV1fk7uvCCYt4p9w2s0ns`) — confirmed to have same prefix match bypass as F-006
+- Auth0 connection name `Bullish` — reveals platform affiliation
+
+Additionally, a `?tester` URL parameter activates an undocumented testing mode client-side (`e.query.tester !== void 0 && t.testingMode()`), switching the API base URL to a development endpoint (`https://dev-data-api.cryptocompare.com`). This is exposed in the production JavaScript bundle.
+
+### Impact
+
+Architecture disclosure. The `TAXAMO_PUBLIC_KEY` and Auth0 Client ID are design-public values. No directly exploitable vulnerability from this finding alone, but the exposed client ID is confirmed vulnerable to F-006 prefix match bypass.
+
+---
+
 ## Conclusion
 
 The highest-impact confirmed finding is **F-001** (`go.coindesk.com` Bitly subdomain takeover, HIGH/P2) which qualifies for Bugcrowd's subdomain takeover category. When chained with **F-005** (CORS misconfiguration on `cdm.coindesk.com`), the combined impact escalates to HIGH — an attacker controlling `go.coindesk.com` gains a CORS-trusted origin capable of reading credentialed responses from `cdm.coindesk.com`.
 
-**F-006** (Auth0 redirect_uri prefix match + missing PKCE enforcement) affects both production and staging OAuth. The prefix match allows an attacker to inject arbitrary query parameters into the registered callback URL, and the missing PKCE enforcement means any intercepted authorization code is immediately redeemable for tokens without the original initiator's code verifier.
+**F-006** (Auth0 redirect_uri prefix match + missing PKCE enforcement) affects **three OAuth clients** across production and staging: `trade.coindesk.com`, `developers.coindesk.com`, and `trade-simnext.coindesk.com`. The prefix match allows an attacker to inject arbitrary query parameters into registered callback URLs, and the missing PKCE enforcement means any intercepted authorization code is immediately redeemable for tokens without the original initiator's code verifier.
 
 The Sailthru CNAMEs in **F-002** require manual verification from a non-proxied network before submission.
 
