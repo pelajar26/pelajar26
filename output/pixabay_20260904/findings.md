@@ -355,6 +355,83 @@ The following require a valid Pixabay account:
 
 11. **API key format reveals user_id prefix (informational)**: API keys follow the format `{user_id}-{25_hex_chars}` (e.g., acc1: `57416195-9d588bb412260f1608c29a8f5`, acc2: `57416282-30bf5dbe2c504f774e7506619`). The user_id portion is already public (visible in profile URLs), so this does not constitute information disclosure. The 25-character hex suffix provides ~83 bits of entropy — brute-force is impractical. Each account receives a unique key properly scoped to that account's session.
 
+12. **Auth token embedded in server-rendered HTML `__BOOTSTRAP__` (extends observation 8)**: The Django auth token documented in observation 8 (localStorage) also travels in the HTTP response body as part of the `__BOOTSTRAP__` JSON object embedded in the HTML `<script>` tag. Sample structure:
+    ```json
+    "security": {
+      "timestamp": "1788529369",
+      "hash": "0560ef9d396ff49ee78f4c65712dd4b1da1e3fb1",
+      "signature": "ssr:1x2UBt:351wyJAR_rZoeQZB9R1uql-hktGxfJUls-959yo2WKE",
+      "auth": {
+        "connect": "connect|ssr|57416282:1x2UBt:kouWKp6lXVsrIZ2sl7dYxVJvVO0Lu31eOmgI5rwKzXI"
+      }
+    }
+    ```
+    The page's client-side JS writes this to localStorage after initial render. Consequences of token-in-HTML:
+    - Token is present in **proxy/CDN access logs** if logging response bodies (pixabay.com uses HTTPS so transport is encrypted, but any Pixabay-side log of response content captures the token)
+    - Token is captured in browser history if the HTML is cached
+    - Any HTML injection vulnerability (even non-JS) on the same origin could leak the token via `innerHTML` reads or page scraping
+    - Extends XSS impact already documented: the token is available both via `localStorage.getItem('auth')` and via `document.documentElement.innerHTML` parsing
+    - The `hash` field uses **SHA-1** (`0560ef9d...` — 40 hex chars), which is deprecated for cryptographic use
+
+13. **Google API Key embedded in server-rendered HTML**: The `__BOOTSTRAP__` JSON contains a Google API key:
+    ```
+    "googleApiKey": "AIzaSyDdeYDZCdvVgS1WXbhM5h5IWgO5lXQvTCY"
+    ```
+    Google API keys embedded in frontend HTML are common for client-side Maps/Places/etc. SDKs, but they must be restricted by **HTTP Referrer** (to `*.pixabay.com/*` only) and by **API scope** (only the specific APIs the key needs). If the key lacks referrer restrictions, any third party can make API calls billed to Pixabay's Google Cloud account, potentially exhausting quotas (denial of revenue) or incurring unexpected charges.
+    
+    The key itself is discoverable by anyone viewing Pixabay's page source. The risk depends entirely on what restrictions are set in the Google Cloud Console — which cannot be verified from outside. This is worth noting to the Pixabay team to confirm the key is restricted.
+
+    **Recommended check:** In Google Cloud Console → APIs & Services → Credentials, verify the key has:
+    - Application restrictions: HTTP referrers, limited to `*.pixabay.com/*`
+    - API restrictions: limited to only the Google APIs actually used on the frontend
+
+14. **Facebook Client Token embedded in server-rendered HTML**: The `__BOOTSTRAP__` JSON contains:
+    ```
+    "facebookClientToken": "8f7f83a8549c06add59404f3b92a0c27"
+    ```
+    Facebook Client Tokens are separate from App Secrets and are intended for use in mobile/client-side SDKs. They are less sensitive than App Secrets but can be used to make authenticated calls to Facebook's API on behalf of Pixabay's application (e.g., `/{app-id}/activities` endpoint for App Events). If not scoped correctly, third parties could:
+    - Log fake App Events against Pixabay's Facebook analytics
+    - Use the token to retrieve app-level public Facebook Graph data under Pixabay's identity
+    
+    Unlike API keys, Client Tokens cannot be restricted to specific HTTP referrers. Informational — embedded in client-side code per Facebook's documented pattern, but worth flagging to confirm the associated Facebook App's permission scope is minimal.
+
+15. **Bot score (68) exposed in frontend `__BOOTSTRAP__`**: The server embeds Pixabay's own bot detection score for the current request directly in the rendered HTML:
+    ```json
+    "analyticsContext": {"bot_score": 68, "verified_bot": false}
+    ```
+    A score of 68 on the acc2 profile page fetch (from a server IP with no prior history, no Cloudflare clearance cookie) indicates the system considers this request moderately bot-like. The exposure of this score to the frontend means:
+    - A motivated attacker can **self-calibrate** their requests in real time by observing score changes — requesting pages, adjusting headers/timing/behavior, and repeating until they achieve a low score
+    - The scoring threshold for triggering CAPTCHA or blocking is implicitly revealed (scores below ~68 from this IP went unchallenged; score 68 did not trigger a challenge for the profile page)
+    - This provides an oracle for tuning automated scraping or account creation bots
+    
+    Informational — the score is used for analytics/fingerprinting rather than hard gating based on this test, but the feedback loop it creates weakens bot-detection posture.
+
+16. **Security header inconsistencies between pages (profile page vs. main site)**:
+    Comparing HTTP response headers between the main site and the profile page (`/users/{username}-{id}/`) reveals inconsistencies:
+
+    | Header | Main site | Profile page | Note |
+    |---|---|---|---|
+    | `HSTS max-age` | — | `3600` (1 hour) | Very short; HSTS recommended minimum is 1 year (31536000s) |
+    | `X-Frame-Options` | `SAMEORIGIN` | `DENY` | More restrictive on profile — possible misconfiguration or inconsistency |
+    | `Cross-Origin-Opener-Policy` | `same-origin` | `same-origin-allow-popups` | Weaker on profile page; `allow-popups` permits opener access from popups |
+    | `Cross-Origin-Embedder-Policy` | `require-corp` | *(absent)* | Missing on profile page — COOP/COEP pair broken |
+    | `Cross-Origin-Resource-Policy` | `same-origin` | *(absent)* | Missing on profile page |
+    | `Referrer-Policy` | `same-origin` | `strict-origin-when-cross-origin` *(duplicated)* | Different policy AND sent as two identical headers |
+    | `Content-Security-Policy` | Full policy | `frame-ancestors 'none'` only | Profile CSP far more permissive |
+    | `Content-Security-Policy-Report-Only` | *(absent)* | `frame-ancestors 'none'` | Report-only CSP mirrors enforcement CSP — redundant |
+
+    The HSTS `max-age=3600` is notably weak — a 1-hour HSTS window means the protection against SSL stripping resets hourly; clients that haven't visited Pixabay in the last hour are not protected. Industry standard is `max-age=31536000; includeSubDomains; preload`.
+    
+    The `COOP: same-origin-allow-popups` on the profile page means a popup window opened from the profile page could still retain `window.opener` access, reducing isolation compared to `same-origin`. When COEP is simultaneously absent, the COOP/COEP pair required for `SharedArrayBuffer` and cross-origin isolation is incomplete on profile pages.
+    
+    Per VDP policy, standalone security header findings are out of scope. Documented here for completeness and as context for any XSS escalation.
+
+17. **Search filter `user_id:` syntax discoverable via source (content enumeration)**: The user profile page search form action contains:
+    ```
+    /images/search/user_id%3a{user_id}%20/
+    ```
+    This reveals that `user_id:{id}` is a valid search filter in Pixabay's search URL syntax (URL-encoded colon → `%3a`). Combined with the sequential, public user IDs visible in profile URLs, this allows enumeration of all content uploaded by any specific user — including content that may not be prominently surfaced via the user's public profile. Informational — the user IDs are already public and the search is returning already-public images, but the filter syntax was previously undocumented.
+
 ---
 
 *Report generated during authorized VDP engagement per Pixabay's responsible disclosure policy.*
