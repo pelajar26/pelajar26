@@ -233,6 +233,51 @@ All other untested paths (`/api/music/`, `/api/sounds/`, etc.) return HTML 404 p
 
 ---
 
+### P-003 — Null Byte Injection in Search Query Causes HTTP 503
+**Severity:** Low  
+**Status:** Confirmed — reproducible, affects both `/api/` and `/api/videos/`
+
+#### Description
+Injecting a URL-encoded null byte (`%00`) into the `q=` query parameter causes the backend search system to return HTTP 503 Service Temporarily Unavailable. The error originates from nginx (1.31.0) returning a 503 from the upstream application server — indicating an unhandled exception in the application layer when the search query contains a null character.
+
+```
+# Reproducible trigger (image API):
+GET https://pixabay.com/api/?key={VALID_KEY}&q=%00
+→ HTTP 503 Service Temporarily Unavailable
+<html><center><h1>503 Service Temporarily Unavailable</h1></center>
+<hr><center>nginx/1.31.0</center>
+
+# Same behavior on video API:
+GET https://pixabay.com/api/videos/?key={VALID_KEY}&q=%00
+→ HTTP 503
+
+# Other string parameters handle null bytes gracefully (no 503):
+GET https://pixabay.com/api/?key={VALID_KEY}&q=test&category=%00  → 200
+GET https://pixabay.com/api/?key={VALID_KEY}&q=test&lang=%00      → 200
+GET https://pixabay.com/api/?key={VALID_KEY}&q=test&colors=%00    → 200
+```
+
+#### Evidence
+- Tested 3 consecutive requests to `?q=%00` — all returned HTTP 503
+- Only the `q=` parameter (search query) causes 503; other string parameters return 200
+- This isolates the issue to the full-text search backend (likely Elasticsearch or database driver) which cannot handle null bytes in the query string
+- The `/api/audio/` endpoint returns 403 for `?q=%00` (the auth gate fires before the search, masking the issue)
+- 503 response headers include `x-skip-sentry:` (see Notable Observation 19)
+- `cf-cache-status: BYPASS` on 503 response — Cloudflare does not cache the error (no impact on other users)
+
+#### Impact
+- Reproducible server error on every request with null byte in `q=`
+- The backend application does not sanitize null bytes from the search query before passing to the search engine
+- Per-request impact only (not a global DoS); rate-limited to 100 req/60s per API key
+- Reveals an unhandled exception path in the search infrastructure
+- Historically, null byte injection in query strings has been a precursor to more severe issues (null-terminated string injection in C libraries, SQL injection bypass via null termination). The 503 error precludes further exploitation from this path.
+
+#### Recommendations
+- Sanitize or reject null bytes (`\x00`) in the `q=` parameter before passing to the search backend
+- Return HTTP 400 with a descriptive error message instead of propagating the unhandled exception as a 503
+
+---
+
 ### Attack Vectors Tested — No Vulnerabilities Confirmed
 
 | Vector | Result |
@@ -244,18 +289,25 @@ All other untested paths (`/api/music/`, `/api/sounds/`, etc.) return HTML 404 p
 | S3 direct bucket access (guessed names) | 404 — correct bucket name not guessed |
 | CORS misconfiguration | Static `*` wildcard by design, no origin reflection |
 | Open redirect via `?next=` | Blocked by Cloudflare WAF |
-| SQL injection via API parameters | Blocked by Cloudflare WAF |
+| SQL injection via API parameters (`id=1;DROP TABLE`) | Blocked by Cloudflare WAF (403) |
 | XSS in search query | Blocked by Cloudflare WAF |
 | Shell injection in API key param | Blocked by Cloudflare WAF (403) |
-| HTTP parameter pollution on API key | Standard 400 error — no bypass |
+| HTTP parameter pollution on API key | Last-value-wins: `?key=valid&key=invalid` → 400; `?key=invalid&key=valid` → 200 (see obs 18) |
 | GraphQL endpoint (all HTTP methods) | 403 — all methods blocked |
-| Host header manipulation on CDN | 530 on `img.pixabay.com` (Cloudflare origin error) |
+| Host header injection on API | 403 — Host header is validated |
 | Path traversal on CDN | 403 — normalized server-side |
-| Subdomain internal exposure | All sensitive subdomains connection refused |
-| API JSONP callback XSS | Tested with valid key — callback sanitized, parentheses stripped (`alert(1)` → `alert1`), no XSS |
+| Subdomain internal exposure | All sensitive subdomains — no DNS records; no dangling CNAMEs found |
+| API JSONP callback XSS | Parentheses stripped (`alert(1)` → `alert1`); partial bypass via comment injection (see obs 18); no exploitable XSS confirmed |
 | Account enumeration via registration | Untestable (Cloudflare blocks unauthenticated POST) |
 | Robots.txt sensitive path access | All disallowed paths return 403 |
 | User collection IDOR (unauthenticated) | 403 for all tested collection URLs |
+| CDN Referer-based bypass (`_1920.jpg`) | 403 regardless of Referer header — not Referer-gated |
+| SSRF via `q=` URL injection | `http://169.254.169.254/` → 403 (WAF blocks AWS metadata URL) |
+| SSRF via `id=` URL injection | 403 (WAF) |
+| Null byte in non-search params | 200 OK — gracefully handled for `category`, `lang`, `colors` |
+| XML entity injection in `q=` | 403 (WAF) |
+| Subdomain takeover | No dangling DNS records found across all CT-logged subdomains |
+| API PUT/PATCH/DELETE methods | 405 Method Not Allowed — only GET and POST accepted |
 
 ---
 
@@ -426,7 +478,60 @@ The following require a valid Pixabay account:
     
     Per VDP policy, standalone security header findings are out of scope. Documented here for completeness and as context for any XSS escalation.
 
-17. **Search filter `user_id:` syntax discoverable via source (content enumeration)**: The user profile page search form action contains:
+18. **API accepts POST method and exhibits last-value-wins parameter behavior**:
+    The Pixabay API (`/api/` and `/api/videos/`) accepts both GET and POST HTTP methods. Sending a POST request with a valid `key=` in the URL query string returns HTTP 200 with a full API response, identical to GET:
+    ```
+    POST https://pixabay.com/api/?key={VALID_KEY}&q=test   → HTTP 200 (full JSON response)
+    GET  https://pixabay.com/api/?key={VALID_KEY}&q=test   → HTTP 200 (identical response)
+    ```
+    The POST body does NOT override URL parameters for the `key` field — URL query string takes precedence. For duplicate parameters in the URL itself, the **last value wins**:
+    ```
+    ?key=INVALID&key=VALID   → HTTP 200 (last valid key wins)
+    ?key=VALID&key=INVALID   → HTTP 400 (last invalid key wins)
+    ```
+    Last-value-wins is worth noting for potential parameter injection in redirect chains or proxy configurations where an attacker can append query parameters. The POST acceptance is informational (no security impact by itself).
+
+    Additionally, the JSONP `callback=` sanitizer (which strips `()` to prevent XSS) can be partially bypassed using a C-style comment to smuggle a `(` character:
+    ```
+    callback=eval%2f%2a%2a%2f(   →   eval({"total":...,"hits":[...]})
+    # URL-decoded: callback=eval/**/( → eval( JSON )
+    ```
+    The `(` after the `/**/` comment passes through the filter. `eval(JSON_object)` is valid JavaScript but the JSON content is properly escaped, so this does not lead to exploitable XSS. Still, the filter bypass is confirmed and documented.
+
+19. **Sentry error tracking revealed via `x-skip-sentry:` response header**: The 503 response from null byte injection (P-003) includes the custom response header `x-skip-sentry:` (empty value). This is a non-standard header used by Pixabay's application layer to instruct Sentry (error tracking platform) to not log this specific error. Its presence confirms:
+    - Pixabay uses **Sentry** for backend application error tracking
+    - The null byte 503 error is either known to the team (header added intentionally to suppress noise) or the header is set by middleware before the unhandled exception
+    - Sentry's presence means unhandled exceptions may be observable by the Pixabay engineering team
+
+20. **P-001 Update — `large` video variant is native 4K**: Re-analysis of video metadata via the API reveals that the `_large.mp4` variant is not limited to HD quality — for many videos, `large` is the highest-resolution transcoded variant at **4K (3840×2160) or greater**:
+    ```
+    Video 228847: large = 2160×3840 (portrait 4K), 211MB
+    Video 153976: large = 3840×2160 (landscape 4K), 39MB
+    ```
+    P-001's no-suffix (original) files for 4K `large` videos are the camera originals at potentially higher bitrate or different codec than the transcoded `_large.mp4`. This revises upward the significance of P-001: the bypass exposes not just "HD originals" but potentially **camera-raw files above the publicly-available 4K transcoded version**, depending on the uploader's source material.
+
+    Exception noted: Video 228847's no-suffix file is 162MB vs the `_large.mp4` at 211MB — smaller than the transcoded version. This suggests the no-suffix file for some portrait-orientation 4K videos may be an intermediate transcode rather than the original upload. The P-001 pattern (no-suffix = larger/original) holds for the majority of tested videos but is not universal.
+
+21. **CDN photo access control is intentionally layered — not a vulnerability**: Direct CDN access to `_640` and `_1280` photo variants (without the `/get/{token}` proxy) returns HTTP 200:
+    ```
+    cdn.pixabay.com/photo/{date}/{slug}_150.jpg  → 200 (thumbnail, always public)
+    cdn.pixabay.com/photo/{date}/{slug}_640.jpg  → 200 (directly accessible)
+    cdn.pixabay.com/photo/{date}/{slug}_1280.jpg → 200 (directly accessible)
+    cdn.pixabay.com/photo/{date}/{slug}_340.jpg  → 403 (blocked)
+    cdn.pixabay.com/photo/{date}/{slug}_960.jpg  → 403 (blocked)
+    cdn.pixabay.com/photo/{date}/{slug}_1920.jpg → 403 (correctly blocked)
+    ```
+    The `/get/{token}` proxy URLs serve these same sizes (640, 1280) with signed tokens. The token mechanism appears to be for **download tracking and analytics** rather than true access control — the underlying CDN files at 640px and 1280px are publicly accessible if the URL pattern is known. Since Pixabay content is CC0 and the 640/1280 sizes are part of the free tier, this is informational rather than a vulnerability. The true access gate is the 1920px+ restriction (correctly enforced at CDN level).
+
+22. **nginx/1.31.0 version disclosed via 405 error page**: HTTP PUT requests to the API return a bare nginx error page:
+    ```html
+    <html><head><title>405 Not Allowed</title></head>
+    <body><center><h1>405 Not Allowed</h1></center>
+    <hr><center>nginx/1.31.0</center></body></html>
+    ```
+    Note: DELETE and PATCH return Django REST Framework JSON errors (`{"detail":"Method \"DELETE\" not allowed."}`), while PUT is blocked at the nginx layer. This reveals the reverse proxy/load balancer software version. Nginx 1.31.0 is current as of mid-2026; no known high-severity CVEs apply.
+
+23. **Search filter `user_id:` syntax discoverable via source (content enumeration)**: The user profile page search form action contains:
     ```
     /images/search/user_id%3a{user_id}%20/
     ```
