@@ -81,3 +81,35 @@ without a funded order and is recorded as the top residual lead.
 ## Test credentials (redacted; ephemeral)
 - Free-tier API key `2150a08b…` (redacted; 7-day expiry) — minted via the documented free-tier flow.
 - Generated EOAs (wallet A/B/C/X) — mine, empty, keys kept local only, not committed.
+
+---
+
+## Round 2 — extended High/Critical testing (all SECURE unless noted)
+| # | Hypothesis (target sev) | Test | Result |
+|---|---|---|---|
+| 10 | **JWT forgery** → ATO (Crit) | `alg=none`; RS256→HS256 pubkey-confusion; escalated claims | Both **401**; control 200. RS256 sig verified against JWKS. **Secure** |
+| 11 | **Scope not enforced (JWT claim trust)** → privesc (High) | mint `read:favorites`-only PAT; JWT embeds ALL 10 scopes in `opensea_scopes`; attempt writes on **REST** and **MCP** | REST **403 "Insufficient permissions"**; MCP **"missing a required scope"**. Both enforce effective scope, ignore the claim. **Secure** (see Info: misleading claim) |
+| 12 | **rpc-proxy SSRF / method abuse** (Crit/High) | `rpc-proxy.opensea.io/{chain}` method allowlist; chain-name traversal/SSRF | `admin_*`,`txpool_content` blocked; chains allowlisted (invalid/traversal→404). No SSRF. **Secure** (note: `debug_traceTransaction` appears reachable — DoS-class, out of scope, not exercised) |
+| 13 | **Stored XSS on profile** (High) | set `displayName`/`bio`/`externalUrl` XSS via API | `externalUrl` scheme-allowlisted (rejects `javascript:`/`data:`); `displayName` alnum+`_-` only. WAF also blocks `<script>` bodies. **Secure** |
+| 14 | **Username brand impersonation** (Med/High) | claim `opensea`/`support`/`admin`/`official` | **409** reserved/taken (case-insensitive). Homograph/zero-width variants rate-limited (429) → **Medium lead, unresolved** |
+| 15 | **Solana SIWX signature confusion** (Crit ATO) | claim A sign B; all-zero sig/pubkey; empty; cross-arch EVM/SVM | All **400**. ed25519 verification correct, address-bound, no zero-key/cross-arch bypass. **Secure** |
+| 16 | **GraphQL authz on user-scoped fields** (High IDOR) | `userNotificationsV2`,`userTokenWatchlist`,`screenWallet` with no JWT | **UNAUTHORIZED / JWT_NOT_PROVIDED**. **Secure** |
+| 17 | **GraphQL excessive PII exposure** (High) | raw queries for `email`/`phone`/`payoutAddress`/`bankAccount`/`feeRecipient` on Collection/Profile | Fields not present on result types; introspection+suggestions disabled. No PII leak observed. **Secure** |
+
+## Residual High/Critical leads (blocked on owned resources / funds — cannot test safely without them)
+1. **`modifyCollection(slug,input)` GraphQL IDOR** — top no-funds-*ish* lead. Modifying a collection you don't own = High/Critical (deface/redirect). CANNOT be tested against a third-party collection (that is a harmful write, correctly blocked). Needs a **self-owned draft collection** (Studio `createCollection` flow) to test whether a *second* owned account can modify it. Same class: `uploadCollectionImage`, `manage_collections`, drop item mutations (`update_drop_item`).
+2. **`cancel_order` maker-check** — as in Round 1; needs a funded, self-owned off-chain order.
+3. **Fee / royalty / price manipulation** on listings/offers — needs funded orders.
+4. **`updateWalletVisibility($address)` GraphQL** — victim-param mutation; REST equivalent proven ownership-checked, but the GraphQL path was not exercised (would be a third-party write).
+
+## Additional Info observations
+- **GraphQL is queryable with raw operations** (not only persisted `documentId`) and returns verbose `extensions.debugInfo` (trace ids, federation/cache timings, `x-ratelimit-remaining`). Info.
+- **JWT `opensea_scopes` claim always lists the account's full entitlement**, independent of the PAT's granted scopes. No in-scope consumer trusts it (REST+MCP both introspect), but it is a latent footgun for any third-party consumer that reads the claim directly. Low.
+- Public OAuth client `379893200225068569` (CLI); API/web client `379201158251573857`; ZITADEL project `374895052226328157`.
+
+## Overall conclusion
+Across two rounds covering OAuth/OIDC, SIWE/SIWX (EVM+Solana), JWT, scope model (REST+MCP),
+agent-relationships, wallet/account IDOR, rpc-proxy, profile XSS, username, and GraphQL authz,
+**no High/Critical was confirmed** — the externally reachable, no-funds surface is well-hardened.
+Every remaining High/Critical lead requires a self-owned collection/drop or on-chain funds to
+test without harming third parties.
