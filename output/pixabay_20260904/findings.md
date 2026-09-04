@@ -268,6 +268,25 @@ The following require a valid Pixabay account:
 
 7. **Security headers on main site**: CSP with nonce, COOP (`same-origin`), COEP (`require-corp`), CORP (`same-origin`), X-Frame-Options (`SAMEORIGIN`), Referrer-Policy (`same-origin`), Permissions-Policy all present. These are explicitly out-of-scope per VDP policy.
 
+8. **Auth token stored in LocalStorage (XSS escalation vector)**: Pixabay stores a standalone Django signed authentication token in `localStorage` under the `auth.connect` key:
+   ```
+   connect|ssr|{user_id}:{base62_unix_timestamp}:{django_hmac_signature}
+   ```
+   This token is generated server-side and delivered to the frontend. Unlike `sessionid` (which is `HttpOnly` and inaccessible to JavaScript), this LocalStorage token is fully readable by any JavaScript on the `pixabay.com` origin. Confirmed via browser LocalStorage inspection (acc1 token age at test time: ~15 minutes).
+
+   Additionally, a companion `signature` field (`ssr:{b62_timestamp}:{signature}`) is stored alongside. The `hash` field uses SHA-1, which is deprecated for cryptographic use (acceptable for non-security-critical integrity only).
+
+   **XSS impact escalation:** If any stored XSS is discovered on Pixabay (forum, upload, comments), the attacker payload can exfiltrate:
+   - `document.cookie` (session cookie if not `HttpOnly`) — limited by `SameSite=Lax`
+   - `localStorage['auth'].connect` (the auth token — **no flag protects LocalStorage**)
+   - Any other LocalStorage values including analytics IDs
+
+   The `auth.connect` token's purpose (WebSocket auth, SSE auth, or internal API auth) was not fully determinable from unauthenticated external testing, but its existence in LocalStorage significantly increases the value of XSS to an attacker.
+
+   **Not separately reportable** without confirming an exploitable XSS, but important context for severity escalation if XSS is found.
+
+9. **`is_human=1` cookie**: Pixabay sets a custom `is_human=1` cookie alongside standard auth cookies. This appears to be a server-set flag (present in authenticated sessions) that may influence application-level bot detection logic distinct from Cloudflare's own bot management. If this cookie is not cryptographically bound to the session, an attacker who can set cookies (e.g., via subdomain cookie injection) could attempt to elevate perceived trust level. Not independently testable without access to the application's backend logic.
+
 ---
 
 *Report generated during authorized VDP engagement per Pixabay's responsible disclosure policy.*
