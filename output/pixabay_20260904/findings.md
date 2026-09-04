@@ -285,6 +285,18 @@ The following require a valid Pixabay account:
 
    **Not separately reportable** without confirming an exploitable XSS, but important context for severity escalation if XSS is found.
 
+   **Extended token analysis — anonymous user tokens:** Pixabay also generates signed tokens for anonymous users visiting the login and registration pages. These tokens are stored in LocalStorage under `auth.login` and `auth.register`:
+   ```
+   login|ssr||en|0:{base62_unix_timestamp}:{django_hmac_signature}
+   register|ssr||en|0:{base62_unix_timestamp}:{django_hmac_signature}
+   ```
+   Differences from the authenticated `connect` token: `user_id` field is empty (anonymous), language code (`en`) is included as a field, and a `flag` field appears (`0`). The purpose of `flag` is unknown — possible values: bot score, feature flag, or consent state. These appear to serve as page-specific anti-CSRF tokens for the login/register forms. The token lifecycle: anonymous → `{login,register}` tokens; post-login → `connect` token replaces them.
+
+   **Potential test vectors (requires browser):**
+   - Can an expired `login` token be replayed on the login form POST?
+   - Does changing `flag` from `0` to `1` alter application behavior?
+   - Is the `login` token validated server-side on form submission, or decorative?
+
 9. **`is_human=1` cookie**: Pixabay sets a custom `is_human=1` cookie alongside standard auth cookies. This appears to be a server-set flag (present in authenticated sessions) that may influence application-level bot detection logic distinct from Cloudflare's own bot management. If this cookie is not cryptographically bound to the session, an attacker who can set cookies (e.g., via subdomain cookie injection) could attempt to elevate perceived trust level. Not independently testable without access to the application's backend logic.
 
 ---
