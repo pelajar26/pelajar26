@@ -89,10 +89,12 @@ GET  /accounts/media/upload/     ← Media upload
 |---|---|---|
 | Photos | 640px, 1280px | 1920px+ (403 on CDN) |
 | Videos | large, medium, small, tiny **+ bare .mp4 (original)** | _original, _source → 404 (not 403) |
-| Audio | All tested patterns 403 | Unknown |
+| Audio | Preview files: 403 (CDN AccessDenied — S3 bucket-level block) | Full audio files blocked; consistent with intent |
 | Vectors | Served as PNG (640px, 1280px) | Original SVG/vector file (403) |
 
 **Correction from initial report:** Video CDN does NOT return 403 for `_original`/`_source` — those variants return 404 (they don't exist as named files). The actual original uploaded file is served as `{id}.mp4` or `{id}-{variant_id}.mp4` (bare, no resolution suffix) and returns **HTTP 200** without authentication. See Finding P-001 below.
+
+**Noteworthy inconsistency:** Audio files at `cdn.pixabay.com/audio/` correctly return HTTP 403 (S3 AccessDenied bucket-level policy), confirming that Pixabay's CDN access control policy for audio is correctly applied. This makes the analogous gap for video originals (P-001) even more notable — audio is protected, video originals are not.
 
 ### API Assessment
 - **Auth method:** API key in query parameter (`?key=...`)
