@@ -161,18 +161,33 @@ Both video_id and variant_id (for legacy naming) are visible in the public CDN U
 
 **4 of 5 tested videos** confirm the no-suffix file is publicly accessible and significantly larger than the largest transcoded variant (1.85× – 2.8× larger).
 
+**Extended re-test (2026-09-04) — most recent uploads (2026/09/03):**
+
+10 videos from the latest batch were tested. 4 are still accessible with no-suffix originals significantly larger than transcoded:
+
+| ID | `_large.mp4` (API-reported) | No-suffix actual | Ratio | HTTP |
+|---|---|---|---|---|
+| 374359 | 2.3MB | **12.2MB** | 5.3× | **200** |
+| 374344 | 1.7MB | **12.2MB** | 7.3× | **200** |
+| 374321 | 26.1MB | **113.7MB** | 4.4× | **200** |
+| 374358 | 95.7MB | **203.6MB** | 2.1× | **200** |
+| 374325, 374332, 374330, 374336, 374335, 374338 | — | — | — | 403 |
+
+**Partial fix observed:** 6 of 10 most-recent videos now return 403 for the no-suffix URL (S3 AccessDenied, consistent with a bucket-level policy). This suggests Pixabay may be rolling out access control fixes for newer uploads, but the rollout is not complete — 4 of 10 videos from the same date remain exposed. Older uploads (2023–2025) tested earlier remain fully accessible.
+
 No-suffix files are distinguishable from transcoded versions by:
 - No `_size` suffix in filename
-- Significantly larger file size than `_large.mp4`
-- `content-type: video/mp4` (transcoded older files served as `binary/octet-stream`)
+- Significantly larger file size than `_large.mp4` (2.1× – 7.3×)
+- `content-type: video/mp4` (older transcoded files served as `binary/octet-stream`)
 
 Note: `x-amz-replication-status` was `COMPLETED` on the initial test file (169249) but `FAILED` on re-test files. This may reflect a change in S3 replication config or the distinction between older and newer uploads. The access control gap is confirmed regardless.
 
 #### Impact
-- The `/videos/download/` endpoint requires authentication (HTTP 403 without session), but no-suffix CDN files are publicly accessible
-- No-suffix files are 1.85× – 2.8× larger than the largest transcoded variant (`_large.mp4`), indicating higher bitrate or resolution
+- The `/videos/download/` endpoint requires authentication (HTTP 403 without session), but no-suffix CDN files are publicly accessible for the majority of existing content
+- No-suffix files are 2.1× – 7.3× larger than the largest transcoded variant (`_large.mp4`), indicating higher bitrate or full-resolution original
 - Original files may contain camera/device metadata (EXIF/ID3) stripped during transcoding
 - iOS device string found in initial original file metadata: `y,;/iOS`
+- **Partial fix in progress**: 60% of newest uploads (2026-09-03) now correctly return 403; existing library remains vulnerable
 
 #### Attack Chain
 1. Open any Pixabay video page or call `/api/videos/?key={key}` (key is publicly registered, free)
