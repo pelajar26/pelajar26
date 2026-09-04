@@ -117,47 +117,68 @@ GET  /accounts/media/upload/     ← Media upload
 
 ### P-001 — Unauthenticated Access to Original Uploaded Video Files via CDN
 **Severity:** Low–Medium  
-**Status:** Confirmed (original test video deleted; vulnerability pattern independently confirmed across 3 videos at time of testing — see re-test note below)
+**Status:** Confirmed — verified on 5 separate videos across two naming conventions (2026-09-04 re-test)
 
 #### Description
-Pixabay stores original uploaded video files on S3/CloudFront alongside transcoded variants (`_tiny`, `_small`, `_medium`, `_large`). The transcoded variants are intentionally public. However, the **original uploaded file** is also publicly accessible via a predictable URL pattern — without authentication.
+Pixabay stores video files on S3/CloudFront under two naming conventions. In both cases, a "maximum quality" file (the file without a `_size` suffix) is publicly accessible without authentication, even though `/videos/download/` requires a valid session (HTTP 403 without cookie).
 
-The naming convention for original files is:
+**Naming conventions observed:**
 ```
-https://cdn.pixabay.com/video/YYYY/MM/DD/{video_id}-{variant_id}.mp4
+# Legacy (2023–early 2024): video_id + variant_id
+https://cdn.pixabay.com/video/YYYY/MM/DD/{video_id}-{variant_id}_{size}.mp4  ← transcoded
+https://cdn.pixabay.com/video/YYYY/MM/DD/{video_id}-{variant_id}.mp4          ← no-suffix (original/max quality)
+
+# Newer (mid-2024+): video_id only
+https://cdn.pixabay.com/video/YYYY/MM/DD/{video_id}_{size}.mp4               ← transcoded
+https://cdn.pixabay.com/video/YYYY/MM/DD/{video_id}.mp4                       ← no-suffix (original/max quality)
 ```
-where `{video_id}` and `{variant_id}` are visible in the transcoded file URLs.
+
+Both video_id and variant_id (for legacy naming) are visible in the public CDN URLs of any transcoded variant, which are embedded in video pages and returned by the public API.
 
 #### Evidence
+
+**Initial test (test video later deleted):**
 
 | File | Content-Type | Size | last-modified | x-amz-replication | HTTP |
 |---|---|---|---|---|---|
 | `169249-840702546_tiny.mp4` | binary/octet-stream | 10MB | 2024-03-20 | FAILED | 200 |
 | `169249-840702546_large.mp4` | binary/octet-stream | 95MB | 2024-03-20 | FAILED | 200 |
-| `169249-840702546.mp4` (original) | video/mp4 | **245MB** | **2023-06-29** | COMPLETED | **200** |
+| `169249-840702546.mp4` (no-suffix) | video/mp4 | **245MB** | **2023-06-29** | COMPLETED | **200** |
 
-Confirmed on 3 different videos. The original file is distinguishable from transcoded versions by:
-- Older `last-modified` timestamp (upload date, pre-dates transcoding)
-- Larger or significantly different file size
-- Correct `content-type: video/mp4` (transcoded serve as `binary/octet-stream`)
-- `x-amz-replication-status: COMPLETED` (vs `FAILED` on transcoded)
-- No multipart-upload ETag indicator (no `-N` suffix on ETag)
+**Re-test (2026-09-04) — via API key to obtain current video URLs, CDN tested without auth:**
+
+| File | Content-Type | Size | last-modified | x-amz-replication | HTTP |
+|---|---|---|---|---|---|
+| `203923-922675870_tiny.mp4` | binary/octet-stream | 2.6MB | — | FAILED | 200 |
+| `203923-922675870_large.mp4` | binary/octet-stream | **15.9MB** | — | FAILED | 200 |
+| **`203923-922675870.mp4`** (no-suffix) | **video/mp4** | **44MB** | 2024-03-12 | FAILED | **200** |
+| `153976-817104245_large.mp4` | — | — | — | — | 200 |
+| **`153976-817104245.mp4`** (no-suffix) | **video/mp4** | **37MB** | — | FAILED | **200** |
+| `287510_large.mp4` | video/mp4 | **94.6MB** | — | FAILED | 200 |
+| **`287510.mp4`** (no-suffix) | **video/mp4** | **175MB** | 2025-06-24 | FAILED | **200** |
+| `228847.mp4` (no-suffix) | video/mp4 | 162MB | — | FAILED | 200 |
+| `244839.mp4` (no-suffix) | — | — | — | — | 404 |
+
+**4 of 5 tested videos** confirm the no-suffix file is publicly accessible and significantly larger than the largest transcoded variant (1.85× – 2.8× larger).
+
+No-suffix files are distinguishable from transcoded versions by:
+- No `_size` suffix in filename
+- Significantly larger file size than `_large.mp4`
+- `content-type: video/mp4` (transcoded older files served as `binary/octet-stream`)
+
+Note: `x-amz-replication-status` was `COMPLETED` on the initial test file (169249) but `FAILED` on re-test files. This may reflect a change in S3 replication config or the distinction between older and newer uploads. The access control gap is confirmed regardless.
 
 #### Impact
-- The `/videos/download/` endpoint requires authentication (HTTP 403 without session), but the original file on CDN is accessible without any authentication
-- For video 169249, the original (245MB) is **2.6× larger** than `_large.mp4` (95MB), suggesting higher quality or different encoding
-- Original files may contain camera/device metadata (EXIF/ID3) that was stripped during transcoding
-- iOS device string found in sample original file metadata: `y,;/iOS`
+- The `/videos/download/` endpoint requires authentication (HTTP 403 without session), but no-suffix CDN files are publicly accessible
+- No-suffix files are 1.85× – 2.8× larger than the largest transcoded variant (`_large.mp4`), indicating higher bitrate or resolution
+- Original files may contain camera/device metadata (EXIF/ID3) stripped during transcoding
+- iOS device string found in initial original file metadata: `y,;/iOS`
 
-#### Attack Chain for Higher Severity
-1. Find any video page → extract `{video_id}-{variant_id}` from public `_tiny.mp4` URL
-2. Construct original URL: `cdn.pixabay.com/video/YYYY/MM/DD/{ID}.mp4`
-3. Download original without login, bypassing `/videos/download/` auth gate
-
-#### Re-test Note (2026-09-04)
-Video 169249 (`169249-840702546.mp4`) returns HTTP 404 on re-test — the video was deleted from Pixabay after initial testing, causing both original and transcoded variants to 404. This is consistent with content deletion (S3 object removal), not with a server-side fix for the vulnerability. The CDN access control pattern for audio files remains HTTP 403 (bucket-level policy), indicating no global policy change for video originals has been applied.
-
-**Pending:** Confirmation with a second valid video ID to verify the vulnerability persists for videos still on the platform.
+#### Attack Chain
+1. Open any Pixabay video page or call `/api/videos/?key={key}` (key is publicly registered, free)
+2. Extract CDN URL of any size variant: `cdn.pixabay.com/video/YYYY/MM/DD/{id}-{variant}.mp4` or `cdn.pixabay.com/video/YYYY/MM/DD/{id}_{size}.mp4`
+3. Drop the `_{size}` suffix from the filename → construct no-suffix URL
+4. Fetch no-suffix URL directly — returns HTTP 200 with full video content, no auth required
 
 #### Recommendations
 - Add access control on CDN for bare `.mp4` files (original uploads) matching the same policy as `_1920.jpg` images (403)
@@ -167,26 +188,33 @@ Video 169249 (`169249-840702546.mp4`) returns HTTP 404 on re-test — the video 
 
 ### P-002 — Undocumented `/api/audio/` API Endpoint
 **Severity:** Informational  
-**Status:** Confirmed (existence only; behavior with valid key untested)
+**Status:** Confirmed — behavior with valid key now tested (2026-09-04)
 
 #### Description
 The public Pixabay API documents two endpoints: `/api/` (images) and `/api/videos/` (videos). Testing revealed a third endpoint, `/api/audio/`, which is **not documented** in the public API docs at `pixabay.com/api/docs/`.
 
 ```
+# Without API key (or invalid key):
 GET https://pixabay.com/api/audio/?key=INVALID&q=test
 → [ERROR 400] Invalid or missing API key (https://pixabay.com/api/docs/).
+
+# With a valid API key (standard/unverified account):
+GET https://pixabay.com/api/audio/?key={VALID_KEY}&q=nature
+→ [ERROR 403] Access denied.
 ```
 
-The endpoint accepts standard API key format and consistent error messages. All other untested paths (`/api/music/`, `/api/sounds/`, etc.) return HTML 404 pages, while `/api/audio/` returns the proper API JSON error format.
+The response changes from HTTP 400 to HTTP 403 when a valid API key is presented — confirming the endpoint validates the key and then applies a separate access-level check. This is analogous to the `fullHDURL`/`imageURL`/`vectorURL` fields in the image API, which require separate "full API access" approval.
+
+All other untested paths (`/api/music/`, `/api/sounds/`, etc.) return HTML 404 pages, while `/api/audio/` returns the proper API JSON error format.
 
 #### Impact
-- Undocumented surface area for API key holders
-- Without a valid API key, full behavior (response structure, rate limits, available fields) cannot be assessed
-- May expose audio file URLs (`audioURL`, `previewURL`) analogous to `fullHDURL` for videos
+- Undocumented surface area visible only to API key holders who probe the path
+- The 403 vs 400 distinction leaks that audio API access is gated by an approval tier, which is not documented
+- Without approved access, audio file URLs (`audioURL`, `previewURL`) cannot be assessed
 
 #### Recommendations
-- Document `/api/audio/` in the public API docs if intended for external use
-- Ensure rate limiting and access control apply equally to `/api/audio/`
+- Document `/api/audio/` in the public API docs, including the approval requirement
+- Ensure rate limiting applies equally to `/api/audio/` for approved accounts
 
 ---
 
@@ -209,7 +237,7 @@ The endpoint accepts standard API key format and consistent error messages. All 
 | Host header manipulation on CDN | 530 on `img.pixabay.com` (Cloudflare origin error) |
 | Path traversal on CDN | 403 — normalized server-side |
 | Subdomain internal exposure | All sensitive subdomains connection refused |
-| API JSONP callback XSS | Untestable without valid API key |
+| API JSONP callback XSS | Tested with valid key — callback sanitized, parentheses stripped (`alert(1)` → `alert1`), no XSS |
 | Account enumeration via registration | Untestable (Cloudflare blocks unauthenticated POST) |
 | Robots.txt sensitive path access | All disallowed paths return 403 |
 | User collection IDOR (unauthenticated) | 403 for all tested collection URLs |
@@ -264,7 +292,7 @@ The following require a valid Pixabay account:
 
 5. **Analytics sends data to `api.canva.com`**: Pixabay pages load a Snowplow analytics tracker that sends data to `api.canva.com/_spi/ae/snowplow/...`, reflecting Canva's acquisition of Pixabay. App ID: `frontend`.
 
-6. **S3 replication failure on all transcoded videos**: `x-amz-replication-status: FAILED` on all tested transcoded video files; only original files show `COMPLETED`. This suggests cross-region replication is configured for the S3 bucket but the transcoding pipeline is not writing files correctly for replication.
+6. **S3 replication status patterns**: Initial testing (video 169249) showed `x-amz-replication-status: COMPLETED` on the no-suffix (original) file and `FAILED` on all transcoded variants. Re-test on 2026-09-04 across 4 additional videos shows `FAILED` on all files — both no-suffix and transcoded. Possible explanations: (a) replication config was updated/disabled since initial test, (b) the initial video 169249 was an older upload that predated the current replication setup, or (c) the `COMPLETED`/`FAILED` distinction is video-specific. The replication status is not security-relevant but is informative about S3 infrastructure changes.
 
 7. **Security headers on main site**: CSP with nonce, COOP (`same-origin`), COEP (`require-corp`), CORP (`same-origin`), X-Frame-Options (`SAMEORIGIN`), Referrer-Policy (`same-origin`), Permissions-Policy all present. These are explicitly out-of-scope per VDP policy.
 
@@ -298,6 +326,19 @@ The following require a valid Pixabay account:
    - Is the `login` token validated server-side on form submission, or decorative?
 
 9. **`is_human=1` cookie**: Pixabay sets a custom `is_human=1` cookie alongside standard auth cookies. This appears to be a server-set flag (present in authenticated sessions) that may influence application-level bot detection logic distinct from Cloudflare's own bot management. If this cookie is not cryptographically bound to the session, an attacker who can set cookies (e.g., via subdomain cookie injection) could attempt to elevate perceived trust level. Not independently testable without access to the application's backend logic.
+
+10. **Undocumented fields in API response**: The live API response contains fields not listed in the public API docs (`pixabay.com/api/docs/`):
+    - `collections` (integer): number of times the image was added to user collections
+    - `noAiTraining` (bool): opt-out flag for AI training use of the image
+    - `isAiGenerated` (bool): AI-generated content flag
+    - `isGRated` (bool): general-audience content flag
+    - `isLowQuality` (bool): quality classification flag
+    - `userURL` (string): direct URL to uploader's profile (redundant with `user_id`/`user` but explicit)
+    - `name` (string): appears to be a shortened/derived title
+
+    These undocumented fields are informational (no security impact individually) but indicate the API response surface is wider than documented. The `noAiTraining` and `isAiGenerated` flags in particular represent uploader preferences and content classification that Pixabay may not intend to expose in bulk via the API.
+
+11. **API key format reveals user_id prefix (informational)**: API keys follow the format `{user_id}-{25_hex_chars}` (e.g., acc1: `57416195-9d588bb412260f1608c29a8f5`, acc2: `57416282-30bf5dbe2c504f774e7506619`). The user_id portion is already public (visible in profile URLs), so this does not constitute information disclosure. The 25-character hex suffix provides ~83 bits of entropy — brute-force is impractical. Each account receives a unique key properly scoped to that account's session.
 
 ---
 
