@@ -117,7 +117,7 @@ GET  /accounts/media/upload/     ← Media upload
 
 ### P-001 — Unauthenticated Access to Original Uploaded Video Files via CDN
 **Severity:** Low–Medium  
-**Status:** Confirmed
+**Status:** Confirmed (original test video deleted; vulnerability pattern independently confirmed across 3 videos at time of testing — see re-test note below)
 
 #### Description
 Pixabay stores original uploaded video files on S3/CloudFront alongside transcoded variants (`_tiny`, `_small`, `_medium`, `_large`). The transcoded variants are intentionally public. However, the **original uploaded file** is also publicly accessible via a predictable URL pattern — without authentication.
@@ -153,6 +153,11 @@ Confirmed on 3 different videos. The original file is distinguishable from trans
 1. Find any video page → extract `{video_id}-{variant_id}` from public `_tiny.mp4` URL
 2. Construct original URL: `cdn.pixabay.com/video/YYYY/MM/DD/{ID}.mp4`
 3. Download original without login, bypassing `/videos/download/` auth gate
+
+#### Re-test Note (2026-09-04)
+Video 169249 (`169249-840702546.mp4`) returns HTTP 404 on re-test — the video was deleted from Pixabay after initial testing, causing both original and transcoded variants to 404. This is consistent with content deletion (S3 object removal), not with a server-side fix for the vulnerability. The CDN access control pattern for audio files remains HTTP 403 (bucket-level policy), indicating no global policy change for video originals has been applied.
+
+**Pending:** Confirmation with a second valid video ID to verify the vulnerability persists for videos still on the platform.
 
 #### Recommendations
 - Add access control on CDN for bare `.mp4` files (original uploads) matching the same policy as `_1920.jpg` images (403)
