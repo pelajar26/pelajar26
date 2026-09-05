@@ -13,6 +13,10 @@ flooding — low request volume, one request per host/path).
 > **verified to be non-impactful**, and a mapped attack surface to guide
 > authenticated follow-up. It intentionally does **not** claim a finding
 > that was not demonstrated.
+>
+> Two testing passes are recorded: **Pass 1** (main perimeter) below, and
+> **Pass 2** (subdomain enumeration, takeover sweep, legacy Vacation-Rental
+> brands, email auth) in the section "Pass 2" near the end.
 
 ## Scope compliance
 
@@ -136,3 +140,94 @@ dev.mlflow.tamg.cloud          -> 403 "Forbidden"
 argo-prod.dspe.tamg.cloud      -> 404 "404 page not found"
 atlantis.ops.tamg.cloud        -> 000 (not publicly resolvable)
 ```
+
+---
+
+# Pass 2 — subdomain enumeration, takeover, legacy brands, email auth
+
+Same scope-compliant methodology (bugcrowd UA, low volume, passive-first).
+
+## Subdomain enumeration (passive, CT logs)
+
+- `*.tripadvisor.com`: **666** unique non-wildcard hostnames →
+  `reports/tripadvisor-com-subdomains.txt`.
+- Vacation-Rental brands (flipkey/holidaylettings/niumba/housetrip/
+  vacationhomerentals): **81** hostnames →
+  `reports/tripadvisor-vacation-rental-hosts.txt`.
+- `*.tamg.cloud`: **378** (Pass 1) → `reports/tripadvisor-tamg-cloud-hosts.txt`.
+
+Most `*.corp.tripadvisor.com`, `*.sip.corp`, `*.d.`, `*.n.` names are
+internal DC / telephony / DB infra (CUCM, Finesse, LDAP, dbproxy, maven-proxy)
+— not publicly resolvable and not appropriate to probe; left untouched.
+
+Public-facing dev/test candidates fingerprinted: `api-test`,
+`internalapi-dev`, `dev-api.content`, `business-qa`, `compasstest`,
+`helptest`, `docs.dev`, `gitlab.dev`, `ladmin`, `hare-api` → all `502`
+(egress gateway cannot reach a dead upstream — decommissioned backends, not
+exploitable). `dev-terra.tripadvisor.com` → AWS API Gateway returning
+`{"message":"Forbidden"}` (auth-gated). `backup-api`, `api-bing` → redirect
+to www / DataDome.
+
+## Subdomain-takeover sweep — RESULT: none confirmed
+
+Method: DoH (`dns.google`) `A`/`CNAME` for all 748 tripadvisor.com + VR
+hosts; flag NXDOMAIN-with-CNAME and CNAMEs to takeover-prone third parties;
+verify candidates.
+
+- Every live CNAME to CloudFront / Fastly / Akamai / ExactTarget resolves to
+  real IPs → distributions/services are **claimed** → not takeoverable.
+- NXDOMAIN-with-CNAME hits point to **internal `*.tripadvisor.com` targets**
+  (e.g. `nokiamaps.*` ccTLDs → `nokiamaps.tripadvisor.com`,
+  `livesite-maven.b` → `maven.dev.tripadvisor.com`) — internal names cannot
+  be claimed by a third party → **no takeover**.
+- `spotlight.tripadvisor.*` / `spotlight-dev` → CNAME to
+  `*.otainsight.com` (dangling) but these hosts are **explicitly OUT OF
+  SCOPE** — not pursued.
+- `tripwow.tripadvisor.com` → CNAME `d2a9j3gvoquhak.cloudfront.net`, which
+  returns **NOERROR with no A record** = a **disabled (still-owned)**
+  CloudFront distribution → the alternate-domain claim is still held by
+  Tripadvisor's account → **not takeoverable** (just a dead `502` endpoint).
+- `zuora-dev.tripadvisor.com` → full **NXDOMAIN**, no dangling CNAME → dead,
+  nothing to claim.
+
+## Legacy Vacation-Rental brands (points-only scope; sundowned)
+
+- `flipkey.com`, `niumba.com`, `holidaylettings.com`,
+  `vacationhomerentals.com` (+ `www`): static archived HTML served from
+  **S3 behind CloudFront** (`Server: AmazonS3`, `Via: …cloudfront`). Origin
+  bucket name is not leaked (CloudFront-fronted); no public listing exposed;
+  flipkey/niumba pages are ~1.5 KB stubs with no JS/secrets.
+- `housetrip.com`: live **Next.js** (Cloudflare). Hydration state + chunk
+  refs contain only `bstatic.com` image URLs and `www.housetrip.com` — no
+  internal hosts, no `svc.cluster.local`, no keys (checked specifically
+  because the earlier env.json report found a k8s URL in Next.js hydration).
+- Legacy origin hosts `api.flipkey.com` / `propertymanagers.flipkey.com` /
+  `secure2.flipkey.com` (199.102.235.x, 185.61.97.x): TCP up but **reset the
+  TLS handshake** → not reachable for testing from here.
+- `rentals.tripadvisor.com` → `503` (awselb, dead backend).
+
+## Email authentication (DMARC) — low severity / eligibility-dependent
+
+Eligible only for domains that send email (per program out-of-scope note);
+Vacation-Rental brands are points-only. Observed via DoH TXT `_dmarc.<d>`:
+
+| Domain | DMARC | Note |
+|---|---|---|
+| `tripadvisor.com` | `p=reject` | strong (good) |
+| `niumba.com` | `p=quarantine; pct=30` | ~70% of failing mail not quarantined |
+| `holidaylettings.com` | `p=quarantine; pct=30` | weak enforcement |
+| `vacationhomerentals.com` | `p=quarantine; pct=10` | ~90% not enforced |
+| `flipkey.com` | `p=none` | monitoring only → spoofable if it sends mail |
+| `housetrip.com` | **no `_dmarc` record** | fully spoofable if it sends mail |
+
+These are at best low-severity (P4/informational) and only on points-only
+brands; confirm each domain actually sends mail (MX/SPF) before considering
+a submission.
+
+## Pass 2 conclusion
+
+No confirmed impactful vulnerability. The external unauthenticated surface
+is either hardened (Pass 1) or decommissioned/static (Pass 2). The realistic
+path to a bounty here is **authenticated** testing (Bugcrowd Ninja accounts,
+test properties, the Tier-2 API key, a DataDome-cleared browser) — see the
+recommended next steps above.
